@@ -8,9 +8,13 @@ name: Session Start
 #       |
 #       |--- sync-dbt (seconds) --------\
 #       |--- upload-dag (seconds) -------+--> trigger-and-poll-pipeline (~10 min)
-#       |                                                                         \
-#       |--- deploy-agent (~5 min) -----------------------------------------------+--> session-ready
+#                                                          |
+#                                                    deploy-agent (~5 min)
+#                                                          |
+#                                                    session-ready
 #
+# deploy-agent runs AFTER the pipeline completes because the analytics agent
+# loads all Gold table schemas at startup — those tables only exist after dbt runs.
 # When session-ready prints, the Streamlit UI is live and ready for NL queries.
 # Run the Session Destroy workflow when done to tear down all AWS resources.
 #
@@ -212,7 +216,7 @@ jobs:
 
   deploy-agent:
     name: Build and deploy analytics agent (${{ inputs.env }})
-    needs: terraform-apply
+    needs: trigger-and-poll-pipeline
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
 
@@ -427,7 +431,7 @@ jobs:
 
   session-ready:
     name: Session ready
-    needs: [terraform-apply, deploy-agent, trigger-and-poll-pipeline]
+    needs: [terraform-apply, deploy-agent]
     runs-on: ubuntu-latest
 
     steps:
