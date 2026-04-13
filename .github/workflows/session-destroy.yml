@@ -1,0 +1,120 @@
+name: Session Destroy
+
+# Tears down all AWS infrastructure for the chosen environment.
+#
+# Safety guard: you must type "destroy" exactly in the confirm input.
+# The job is skipped entirely if the confirmation does not match.
+#
+# What this destroys:
+#   Everything created by terraform-platform-infra-live for the chosen
+#   environment: VPC (Virtual Private Cloud), MWAA (Amazon Managed Workflows
+#   for Apache Airflow), ECS (Elastic Container Service) Fargate tasks,
+#   ALB (Application Load Balancer), Glue, Athena, S3 (Simple Storage Service)
+#   data buckets, and all IAM (Identity and Access Management) roles.
+#
+# What this does NOT destroy:
+#   terraform-bootstrap resources (OIDC provider, github-actions-role, tfstate
+#   bucket, DynamoDB lock table). These survive every session by design.
+#
+# Prerequisites:
+#   Same as Session Start — OIDC role and GitHub Environments must exist.
+#   GH_PAT secret required to check out terraform-platform-infra-live.
+#
+# Cost reminder: a typical 2-3 hour session costs ~$1.50-$2.50 total.
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Environment to destroy"
+        required: true
+        default: dev
+        type: choice
+        options: [dev, staging, prod]
+      db_password:
+        description: "RDS master password (needed for Terraform variable validation)"
+        required: true
+        type: string
+      redshift_admin_password:
+        description: "Redshift admin password (needed for Terraform variable validation)"
+        required: true
+        type: string
+      confirm:
+        description: "Type 'destroy' to confirm teardown"
+        required: true
+        type: string
+
+jobs:
+  terraform-destroy:
+    name: Destroy ${{ inputs.env }} infrastructure
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+
+    # Hard stop if the user did not type "destroy" exactly.
+    if: ${{ inputs.confirm == 'destroy' }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV:                           ${{ inputs.env }}
+      AWS_REGION:                    eu-central-1
+      TF_VAR_db_password:            ${{ inputs.db_password }}
+      TF_VAR_redshift_admin_password: ${{ inputs.redshift_admin_password }}
+
+    steps:
+      - name: Checkout terraform-platform-infra-live
+        uses: actions/checkout@v4
+        with:
+          repository: enterprise-data-platform-emeka/terraform-platform-infra-live
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.6"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform init
+        run: |
+          cd environments/${{ env.ENV }}
+          terraform init
+
+      - name: Terraform destroy
+        run: |
+          cd environments/${{ env.ENV }}
+          terraform destroy -auto-approve
+
+      - name: Destroy summary
+        run: |
+          echo ""
+          echo "================================================"
+          echo "  SESSION DESTROYED"
+          echo "================================================"
+          echo ""
+          echo "  All ${ENV} AWS resources have been torn down."
+          echo "  Typical session cost: ~\$1.50-\$2.50 for a 2-3 hour session."
+          echo ""
+          echo "  terraform-bootstrap resources (OIDC, tfstate bucket, lock"
+          echo "  table) are permanent and were NOT destroyed."
+          echo ""
+          echo "================================================"
+
+  safety-check-failed:
+    name: Confirmation mismatch — destroy skipped
+    runs-on: ubuntu-latest
+    if: ${{ inputs.confirm != 'destroy' }}
+    steps:
+      - name: Explain skip
+        run: |
+          echo "Destroy was NOT triggered."
+          echo "You entered: '${{ inputs.confirm }}'"
+          echo "Expected:    'destroy'"
+          echo ""
+          echo "Re-run the workflow and type 'destroy' exactly in the confirm field."

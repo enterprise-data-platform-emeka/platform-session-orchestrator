@@ -1,0 +1,457 @@
+name: Session Start
+
+# Orchestrates a full EDP (Enterprise Data Platform) session from scratch.
+#
+# Dependency order (sequential where required, parallel where safe):
+#
+#   terraform-apply (~25 min)
+#       |
+#       |--- sync-dbt (seconds) --------\
+#       |--- upload-dag (seconds) -------+--> trigger-and-poll-pipeline (~10 min)
+#       |                                                                         \
+#       |--- deploy-agent (~5 min) -----------------------------------------------+--> session-ready
+#
+# When session-ready prints, the Streamlit UI is live and ready for NL queries.
+# Run the Session Destroy workflow when done to tear down all AWS resources.
+#
+# Prerequisites (one-time setup):
+#   1. terraform-bootstrap applied — creates OIDC provider and github-actions-role.
+#   2. terraform-github-setup applied — creates GitHub Environments (dev/staging/prod)
+#      and the AWS_ACCOUNT_ID repository variable in this repo.
+#   3. GH_PAT repository secret — a GitHub Personal Access Token with "repo" scope,
+#      used to check out other repos in the org during this workflow.
+#
+# Required secrets / variables in this repo (Settings -> Secrets and variables -> Actions):
+#   Secrets:
+#     GH_PAT          — GitHub PAT with repo scope (for cross-repo checkout)
+#   Variables (per Environment: dev / staging / prod):
+#     AWS_ACCOUNT_ID  — 12-digit AWS account ID (not sensitive, used in resource names)
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Target environment"
+        required: true
+        default: dev
+        type: choice
+        options: [dev, staging, prod]
+      db_password:
+        description: "RDS master password (TF_VAR_db_password)"
+        required: true
+        type: string
+      redshift_admin_password:
+        description: "Redshift admin password (TF_VAR_redshift_admin_password)"
+        required: true
+        type: string
+
+# ── Job 1: Apply all AWS infrastructure ──────────────────────────────────────
+
+jobs:
+  terraform-apply:
+    name: Apply infrastructure (${{ inputs.env }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+
+    outputs:
+      alb_dns:    ${{ steps.tf-outputs.outputs.alb_dns }}
+      account_id: ${{ steps.account.outputs.id }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV:                           ${{ inputs.env }}
+      AWS_REGION:                    eu-central-1
+      TF_VAR_db_password:            ${{ inputs.db_password }}
+      TF_VAR_redshift_admin_password: ${{ inputs.redshift_admin_password }}
+
+    steps:
+      - name: Checkout terraform-platform-infra-live
+        uses: actions/checkout@v4
+        with:
+          repository: enterprise-data-platform-emeka/terraform-platform-infra-live
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.6"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve AWS account ID
+        id: account
+        run: echo "id=$(aws sts get-caller-identity --query Account --output text)" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform init
+        run: |
+          cd environments/${{ env.ENV }}
+          terraform init
+
+      - name: Terraform apply
+        run: |
+          cd environments/${{ env.ENV }}
+          terraform apply -auto-approve
+
+      - name: Capture Terraform outputs
+        id: tf-outputs
+        run: |
+          cd environments/${{ env.ENV }}
+          echo "alb_dns=$(terraform output -raw analytics_agent_alb_dns)" >> "$GITHUB_OUTPUT"
+
+# ── Job 2: Sync dbt project to S3 (parallel after terraform-apply) ───────────
+
+  sync-dbt:
+    name: Sync dbt project to S3 (${{ inputs.env }})
+    needs: terraform-apply
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV:        ${{ inputs.env }}
+      AWS_REGION: eu-central-1
+
+    steps:
+      - name: Checkout platform-dbt-analytics
+        uses: actions/checkout@v4
+        with:
+          repository: enterprise-data-platform-emeka/platform-dbt-analytics
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Sync dbt project to MWAA S3 bucket
+        # MWAA workers run: aws s3 sync s3://{bucket}/dbt/platform-dbt-analytics/ /tmp/dbt_workspace/
+        # at the start of each dbt task. Syncing here means dbt changes reach MWAA
+        # without any environment update.
+        env:
+          MWAA_BUCKET: edp-${{ env.ENV }}-${{ needs.terraform-apply.outputs.account_id }}-mwaa-dags
+        run: |
+          aws s3 sync . "s3://${MWAA_BUCKET}/dbt/platform-dbt-analytics/" \
+            --delete \
+            --exclude ".git/*" \
+            --exclude ".github/*" \
+            --exclude "__pycache__/*" \
+            --exclude ".venv/*" \
+            --exclude "target/*" \
+            --exclude "dbt_packages/*" \
+            --exclude "logs/*"
+          echo "dbt project synced to s3://${MWAA_BUCKET}/dbt/platform-dbt-analytics/"
+
+# ── Job 3: Upload DAG to MWAA S3 bucket (parallel after terraform-apply) ─────
+
+  upload-dag:
+    name: Upload DAG to MWAA (${{ inputs.env }})
+    needs: terraform-apply
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV:           ${{ inputs.env }}
+      AWS_REGION:    eu-central-1
+      MWAA_ENV_NAME: edp-${{ inputs.env }}-mwaa
+
+    steps:
+      - name: Checkout platform-orchestration-mwaa-airflow
+        uses: actions/checkout@v4
+        with:
+          repository: enterprise-data-platform-emeka/platform-orchestration-mwaa-airflow
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Assert MWAA is AVAILABLE
+        # Abort if MWAA is still CREATING or UPDATING. This should not happen
+        # because terraform-apply waits for MWAA to reach AVAILABLE before
+        # completing — but this is a safety net.
+        run: |
+          STATUS=$(aws mwaa get-environment \
+            --name "${MWAA_ENV_NAME}" \
+            --query "Environment.Status" \
+            --output text)
+          echo "MWAA status: ${STATUS}"
+          if [ "${STATUS}" != "AVAILABLE" ]; then
+            echo "MWAA is ${STATUS}. Expected AVAILABLE after terraform apply."
+            exit 1
+          fi
+
+      - name: Upload dags/ to S3
+        env:
+          MWAA_BUCKET: edp-${{ env.ENV }}-${{ needs.terraform-apply.outputs.account_id }}-mwaa-dags
+        run: |
+          aws s3 sync dags/ "s3://${MWAA_BUCKET}/dags/" \
+            --delete \
+            --exclude "__pycache__/*" \
+            --exclude "*.pyc"
+          echo "DAGs uploaded to s3://${MWAA_BUCKET}/dags/"
+          echo "MWAA picks up new DAG files within ~30 seconds."
+
+# ── Job 4: Build and deploy analytics agent (parallel after terraform-apply) ──
+
+  deploy-agent:
+    name: Build and deploy analytics agent (${{ inputs.env }})
+    needs: terraform-apply
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV:            ${{ inputs.env }}
+      AWS_REGION:     eu-central-1
+      CONTAINER_NAME: agent
+
+    steps:
+      - name: Checkout platform-analytics-agent
+        uses: actions/checkout@v4
+        with:
+          repository: enterprise-data-platform-emeka/platform-analytics-agent
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to ECR
+        id: build-image
+        env:
+          ECR_REGISTRY:   ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: edp-${{ env.ENV }}-analytics-agent
+          IMAGE_TAG:      sha-${{ github.sha }}
+        run: |
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker build --target runtime \
+            -t "${IMAGE_URI}" \
+            -t "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
+            .
+          docker push "${IMAGE_URI}"
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+          echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
+      - name: Download current task definition
+        env:
+          TASK_FAMILY: edp-${{ env.ENV }}-analytics-agent
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${TASK_FAMILY}" \
+            --query taskDefinition \
+            > task-definition.json
+
+      - name: Update task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name:  ${{ env.CONTAINER_NAME }}
+          image:           ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy new task definition to ECS service
+        # Registers the new task definition revision and rolls out the ECS
+        # service to the new image. Waits until the new task is healthy and
+        # the old task is stopped before succeeding.
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition:            ${{ steps.task-def.outputs.task-definition }}
+          service:                    edp-${{ env.ENV }}-analytics-agent
+          cluster:                    edp-${{ env.ENV }}-analytics-agent
+          wait-for-service-stability: true
+
+# ── Job 5: Trigger edp_pipeline DAG and poll until completion ─────────────────
+
+  trigger-and-poll-pipeline:
+    name: Run edp_pipeline DAG (${{ inputs.env }})
+    needs: [sync-dbt, upload-dag]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV:           ${{ inputs.env }}
+      AWS_REGION:    eu-central-1
+      MWAA_ENV_NAME: edp-${{ inputs.env }}-mwaa
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Trigger edp_pipeline DAG via MWAA CLI
+        # Gets a short-lived MWAA CLI token (valid 60 s) and POSTs the trigger
+        # command to the MWAA webserver CLI endpoint. Prints decoded stdout/stderr.
+        run: |
+          RESPONSE=$(aws mwaa create-cli-token \
+            --name "${MWAA_ENV_NAME}" \
+            --output json)
+          CLI_TOKEN=$(echo "${RESPONSE}" | jq -r '.CliToken')
+          WEB_HOSTNAME=$(echo "${RESPONSE}" | jq -r '.WebServerHostname')
+
+          HTTP_STATUS=$(curl -s \
+            -o /tmp/trigger_out.json \
+            -w "%{http_code}" \
+            -X POST "https://${WEB_HOSTNAME}/aws_mwaa/cli" \
+            -H "Authorization: Bearer ${CLI_TOKEN}" \
+            -H "Content-Type: text/plain" \
+            --data "dags trigger edp_pipeline")
+
+          echo "HTTP status: ${HTTP_STATUS}"
+          if [ -s /tmp/trigger_out.json ]; then
+            STDOUT=$(jq -r '.stdout // ""' /tmp/trigger_out.json | base64 --decode 2>/dev/null || true)
+            STDERR=$(jq -r '.stderr // ""' /tmp/trigger_out.json | base64 --decode 2>/dev/null || true)
+            [ -n "${STDOUT}" ] && echo "stdout: ${STDOUT}"
+            [ -n "${STDERR}" ] && echo "stderr: ${STDERR}"
+          fi
+
+          if [ "${HTTP_STATUS}" != "200" ]; then
+            echo "DAG trigger failed (HTTP ${HTTP_STATUS})."
+            exit 1
+          fi
+
+          echo "edp_pipeline triggered. Waiting 15 s for the run to register..."
+          sleep 15
+
+      - name: Poll edp_pipeline until success or failure (timeout 30 min)
+        # Fetches a fresh MWAA CLI token each iteration (tokens are valid ~60 s).
+        # Calls "dags list-runs --dag-id edp_pipeline -o json" and inspects the
+        # state of the most recent run (index 0 in the JSON array = newest run).
+        # Polls every 30 s for up to 30 min (60 attempts).
+        run: |
+          MAX_ATTEMPTS=60
+          SLEEP_SECONDS=30
+          ATTEMPT=0
+
+          while [ "${ATTEMPT}" -lt "${MAX_ATTEMPTS}" ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Poll ${ATTEMPT}/${MAX_ATTEMPTS} — $(date -u '+%H:%M:%S UTC')"
+
+            # Fresh token each iteration — they expire in ~60 s
+            RESPONSE=$(aws mwaa create-cli-token \
+              --name "${MWAA_ENV_NAME}" \
+              --output json)
+            CLI_TOKEN=$(echo "${RESPONSE}" | jq -r '.CliToken')
+            WEB_HOSTNAME=$(echo "${RESPONSE}" | jq -r '.WebServerHostname')
+
+            HTTP_STATUS=$(curl -s \
+              -o /tmp/poll_out.json \
+              -w "%{http_code}" \
+              -X POST "https://${WEB_HOSTNAME}/aws_mwaa/cli" \
+              -H "Authorization: Bearer ${CLI_TOKEN}" \
+              -H "Content-Type: text/plain" \
+              --data "dags list-runs --dag-id edp_pipeline --no-backfill -o json")
+
+            if [ "${HTTP_STATUS}" != "200" ]; then
+              echo "  Poll request failed (HTTP ${HTTP_STATUS}), retrying..."
+              sleep "${SLEEP_SECONDS}"
+              continue
+            fi
+
+            RAW=$(jq -r '.stdout // ""' /tmp/poll_out.json | base64 --decode 2>/dev/null || echo "")
+
+            # Parse the state of the most recent run (first element in JSON array)
+            STATE=$(echo "${RAW}" | python3 -c "
+          import sys, json
+          try:
+              runs = json.loads(sys.stdin.read())
+              if runs:
+                  print(runs[0].get('state', 'unknown'))
+              else:
+                  print('no_runs')
+          except Exception:
+              print('parse_error')
+          " 2>/dev/null || echo "unknown")
+
+            echo "  Most recent run state: ${STATE}"
+
+            case "${STATE}" in
+              success)
+                echo ""
+                echo "edp_pipeline completed successfully."
+                exit 0
+                ;;
+              failed)
+                echo ""
+                echo "edp_pipeline FAILED. Check the MWAA Airflow UI for task logs."
+                exit 1
+                ;;
+              running|queued|no_runs|unknown|parse_error)
+                echo "  Still in progress. Waiting ${SLEEP_SECONDS}s..."
+                sleep "${SLEEP_SECONDS}"
+                ;;
+              *)
+                echo "  Unexpected state '${STATE}'. Waiting ${SLEEP_SECONDS}s..."
+                sleep "${SLEEP_SECONDS}"
+                ;;
+            esac
+          done
+
+          echo ""
+          echo "Timed out after $((MAX_ATTEMPTS * SLEEP_SECONDS / 60)) minutes."
+          echo "Check the MWAA Airflow UI to see where the pipeline stalled."
+          exit 1
+
+# ── Job 6: Session ready — print access URLs ─────────────────────────────────
+
+  session-ready:
+    name: Session ready
+    needs: [terraform-apply, deploy-agent, trigger-and-poll-pipeline]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Print session summary
+        env:
+          ENV:     ${{ inputs.env }}
+          ALB_DNS: ${{ needs.terraform-apply.outputs.alb_dns }}
+        run: |
+          echo ""
+          echo "================================================"
+          echo "  SESSION IS READY"
+          echo "================================================"
+          echo ""
+          echo "  Environment  : ${ENV}"
+          echo ""
+          echo "  Streamlit UI (open in browser from within VPC):"
+          echo "    http://${ALB_DNS}:8501"
+          echo ""
+          echo "  FastAPI (curl from within VPC):"
+          echo "    curl -s -X POST http://${ALB_DNS}/ask \\"
+          echo "      -H 'Content-Type: application/json' \\"
+          echo "      -d '{\"question\": \"Which country has the highest revenue?\"}'"
+          echo ""
+          echo "  When done: run the Session Destroy workflow."
+          echo "  Cost so far: ~\$0.30-\$0.50 (infra up, no queries yet)"
+          echo ""
+          echo "================================================"
