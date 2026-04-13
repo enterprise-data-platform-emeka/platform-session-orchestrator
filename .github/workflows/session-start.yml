@@ -314,6 +314,20 @@ jobs:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Unpause edp_pipeline DAG
+        # New MWAA environments default to all DAGs paused. Unpausing is idempotent.
+        run: |
+          RESPONSE=$(aws mwaa create-cli-token \
+            --name "${MWAA_ENV_NAME}" \
+            --output json)
+          CLI_TOKEN=$(echo "${RESPONSE}" | jq -r '.CliToken')
+          WEB_HOSTNAME=$(echo "${RESPONSE}" | jq -r '.WebServerHostname')
+
+          curl -s -X POST "https://${WEB_HOSTNAME}/aws_mwaa/cli" \
+            -H "Authorization: Bearer ${CLI_TOKEN}" \
+            -H "Content-Type: text/plain" \
+            --data "dags unpause edp_pipeline" | jq -r '.stdout // ""' | base64 --decode 2>/dev/null || true
+
       - name: Trigger edp_pipeline DAG via MWAA CLI
         # Gets a short-lived MWAA CLI token (valid 60 s) and POSTs the trigger
         # command to the MWAA webserver CLI endpoint. Prints decoded stdout/stderr.
