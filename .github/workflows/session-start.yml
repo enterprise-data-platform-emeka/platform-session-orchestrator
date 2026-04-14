@@ -314,6 +314,53 @@ jobs:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Wait for edp_pipeline DAG to be registered by scheduler
+        # The DAG file was just uploaded to S3. MWAA's scheduler needs up to
+        # 90 seconds to parse it and register it in the Airflow database.
+        # Triggering before registration silently creates no run, causing the
+        # poll step to see no_runs for the full timeout. This step polls
+        # dags list until edp_pipeline appears (up to 3 minutes).
+        run: |
+          MAX_WAIT=18   # 18 × 10s = 3 minutes
+          FOUND=0
+
+          for i in $(seq 1 "${MAX_WAIT}"); do
+            RESPONSE=$(aws mwaa create-cli-token \
+              --name "${MWAA_ENV_NAME}" \
+              --output json)
+            CLI_TOKEN=$(echo "${RESPONSE}" | jq -r '.CliToken')
+            WEB_HOSTNAME=$(echo "${RESPONSE}" | jq -r '.WebServerHostname')
+
+            RAW=$(curl -s \
+              -X POST "https://${WEB_HOSTNAME}/aws_mwaa/cli" \
+              -H "Authorization: Bearer ${CLI_TOKEN}" \
+              -H "Content-Type: text/plain" \
+              --data "dags list -o json" \
+              | jq -r '.stdout // ""' | base64 --decode 2>/dev/null || echo "")
+
+            if echo "${RAW}" | python3 -c "
+          import sys, json
+          try:
+              dags = json.loads(sys.stdin.read())
+              ids = [d.get('dag_id','') for d in dags]
+              print('found' if 'edp_pipeline' in ids else 'not_found')
+          except Exception:
+              print('not_found')
+          " | grep -q found; then
+              echo "edp_pipeline registered (attempt ${i}/${MAX_WAIT})."
+              FOUND=1
+              break
+            fi
+
+            echo "Attempt ${i}/${MAX_WAIT}: DAG not yet registered. Waiting 10s..."
+            sleep 10
+          done
+
+          if [ "${FOUND}" -eq 0 ]; then
+            echo "edp_pipeline did not appear in Airflow within 3 minutes."
+            exit 1
+          fi
+
       - name: Unpause edp_pipeline DAG
         # New MWAA environments default to all DAGs paused. Unpausing is idempotent.
         run: |
@@ -359,7 +406,7 @@ jobs:
             exit 1
           fi
 
-          echo "edp_pipeline triggered. Waiting 15 s for the run to register..."
+          echo "edp_pipeline triggered. Waiting 15s for the run to register..."
           sleep 15
 
       - name: Poll edp_pipeline until success or failure (timeout 30 min)
