@@ -377,7 +377,11 @@ jobs:
 
       - name: Trigger edp_pipeline DAG via MWAA CLI
         # Gets a short-lived MWAA CLI token (valid 60 s) and POSTs the trigger
-        # command to the MWAA webserver CLI endpoint. Prints decoded stdout/stderr.
+        # command to the MWAA webserver CLI endpoint.
+        # Fails fast if Airflow returns an error in the response body stderr field —
+        # MWAA always returns HTTP 200, so errors only appear in the CLI stderr.
+        # After triggering, polls up to 5 times (every 5 s) to confirm a run was
+        # actually created before entering the long 30-min poll loop.
         run: |
           RESPONSE=$(aws mwaa create-cli-token \
             --name "${MWAA_ENV_NAME}" \
@@ -394,6 +398,8 @@ jobs:
             --data "dags trigger edp_pipeline")
 
           echo "HTTP status: ${HTTP_STATUS}"
+          STDOUT=""
+          STDERR=""
           if [ -s /tmp/trigger_out.json ]; then
             STDOUT=$(jq -r '.stdout // ""' /tmp/trigger_out.json | base64 --decode 2>/dev/null || true)
             STDERR=$(jq -r '.stderr // ""' /tmp/trigger_out.json | base64 --decode 2>/dev/null || true)
@@ -406,8 +412,47 @@ jobs:
             exit 1
           fi
 
-          echo "edp_pipeline triggered. Waiting 15s for the run to register..."
-          sleep 15
+          # MWAA returns HTTP 200 even when Airflow itself errors. Check stderr.
+          if echo "${STDERR}" | grep -qi "error\|exception\|failed\|not found"; then
+            echo "Airflow CLI returned an error. Trigger did not succeed."
+            exit 1
+          fi
+
+          echo "edp_pipeline triggered. Verifying run was created (up to 25s)..."
+          RUN_FOUND=0
+          for i in 1 2 3 4 5; do
+            sleep 5
+            VERIFY_RESP=$(aws mwaa create-cli-token \
+              --name "${MWAA_ENV_NAME}" \
+              --output json)
+            VERIFY_TOKEN=$(echo "${VERIFY_RESP}" | jq -r '.CliToken')
+            VERIFY_HOST=$(echo "${VERIFY_RESP}" | jq -r '.WebServerHostname')
+            RAW=$(curl -s \
+              -X POST "https://${VERIFY_HOST}/aws_mwaa/cli" \
+              -H "Authorization: Bearer ${VERIFY_TOKEN}" \
+              -H "Content-Type: text/plain" \
+              --data "dags list-runs --dag-id edp_pipeline -o json" \
+              | jq -r '.stdout // ""' | base64 --decode 2>/dev/null || echo "")
+            STATE=$(echo "${RAW}" | python3 -c "
+          import sys, json
+          try:
+              runs = json.loads(sys.stdin.read())
+              print(runs[0].get('state','unknown') if runs else 'no_runs')
+          except Exception:
+              print('no_runs')
+          " 2>/dev/null || echo "no_runs")
+            echo "  Verify attempt ${i}/5: state=${STATE}"
+            if [ "${STATE}" != "no_runs" ]; then
+              RUN_FOUND=1
+              break
+            fi
+          done
+
+          if [ "${RUN_FOUND}" -eq 0 ]; then
+            echo "DAG run was not created within 25s of trigger. Check MWAA Airflow UI."
+            echo "Possible causes: DAG still paused, DAG import error, or webserver not ready."
+            exit 1
+          fi
 
       - name: Poll edp_pipeline until success or failure (timeout 30 min)
         # Fetches a fresh MWAA CLI token each iteration (tokens are valid ~60 s).
@@ -436,7 +481,7 @@ jobs:
               -X POST "https://${WEB_HOSTNAME}/aws_mwaa/cli" \
               -H "Authorization: Bearer ${CLI_TOKEN}" \
               -H "Content-Type: text/plain" \
-              --data "dags list-runs --dag-id edp_pipeline --no-backfill -o json")
+              --data "dags list-runs --dag-id edp_pipeline -o json")
 
             if [ "${HTTP_STATUS}" != "200" ]; then
               echo "  Poll request failed (HTTP ${HTTP_STATUS}), retrying..."
