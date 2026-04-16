@@ -2,30 +2,31 @@ name: Session Start
 
 # Orchestrates a full EDP (Enterprise Data Platform) session from scratch.
 #
-# Dependency order (sequential where required, parallel where safe):
+# Dependency order:
 #
-#   terraform-apply (~25 min)
+#   terraform-apply (~5 min for Step Functions, ~25 min for MWAA)
 #       |
-#       |--- sync-dbt (seconds) --------\
-#       |--- upload-dag (seconds) -------+--> trigger-and-poll-pipeline (~10 min)
-#                                                          |
-#                                                    deploy-agent (~5 min)
-#                                                          |
-#                                                    session-ready
+#       |--- sync-dbt (seconds) ──────────────────────────────\
+#       |--- upload-dag (MWAA only, seconds) ─────────────────+──> trigger-pipeline (~10 min)
+#                                                                           |
+#                                                                     deploy-agent (~5 min)
+#                                                                           |
+#                                                                     session-ready
 #
-# deploy-agent runs AFTER the pipeline completes because the analytics agent
-# loads all Gold table schemas at startup — those tables only exist after dbt runs.
-# When session-ready prints, the Streamlit UI is live and ready for NL queries.
-# Run the Session Destroy workflow when done to tear down all AWS resources.
+# Orchestrator choices:
+#   step-functions (default): Step Functions state machine. No separate DAG upload.
+#     Fast: no 25-min MWAA startup wait. Run this for every dev session.
+#   mwaa: Full MWAA Airflow environment. Slower but shows the Airflow UI.
+#     Use this when recording the YouTube demo.
 #
 # Prerequisites (one-time setup):
 #   1. terraform-bootstrap applied — creates OIDC provider and github-actions-role.
 #   2. terraform-github-setup applied — creates GitHub Environments (dev/staging/prod)
 #      and the AWS_ACCOUNT_ID repository variable in this repo.
-#   3. GH_PAT repository secret — a GitHub Personal Access Token with "repo" scope,
+#   3. GH_PAT repository secret — a GitHub Personal Access Token with repo scope,
 #      used to check out other repos in the org during this workflow.
 #
-# Required secrets / variables in this repo (Settings -> Secrets and variables -> Actions):
+# Required secrets / variables (Settings -> Secrets and variables -> Actions):
 #   Secrets:
 #     GH_PAT          — GitHub PAT with repo scope (for cross-repo checkout)
 #   Variables (per Environment: dev / staging / prod):
@@ -40,13 +41,15 @@ on:
         default: dev
         type: choice
         options: [dev, staging, prod]
+      orchestrator:
+        description: "Orchestrator (step-functions for daily use, mwaa for YouTube demo)"
+        required: true
+        default: step-functions
+        type: choice
+        options: [step-functions, mwaa]
       db_password:
-        description: "RDS master password (TF_VAR_db_password)"
-        required: true
-        type: string
-      redshift_admin_password:
-        description: "Redshift admin password (TF_VAR_redshift_admin_password)"
-        required: true
+        description: "RDS master password (only needed when module ingestion is enabled)"
+        required: false
         type: string
 
 # ── Job 1: Apply all AWS infrastructure ──────────────────────────────────────
@@ -66,10 +69,8 @@ jobs:
       contents: read
 
     env:
-      ENV:                           ${{ inputs.env }}
-      AWS_REGION:                    eu-central-1
-      TF_VAR_db_password:            ${{ inputs.db_password }}
-      TF_VAR_redshift_admin_password: ${{ inputs.redshift_admin_password }}
+      ENV:        ${{ inputs.env }}
+      AWS_REGION: eu-central-1
 
     steps:
       - name: Checkout terraform-platform-infra-live
@@ -110,6 +111,10 @@ jobs:
           echo "alb_dns=$(terraform output -raw analytics_agent_alb_dns)" >> "$GITHUB_OUTPUT"
 
 # ── Job 2: Sync dbt project to S3 (parallel after terraform-apply) ───────────
+# Step Functions: syncs to s3://{bronze-bucket}/dbt/platform-dbt-analytics/
+#   The run_dbt Glue job downloads it from there at runtime.
+# MWAA: syncs to s3://{mwaa-dags-bucket}/dbt/platform-dbt-analytics/
+#   The Airflow BashOperator downloads it from there at runtime.
 
   sync-dbt:
     name: Sync dbt project to S3 (${{ inputs.env }})
@@ -138,14 +143,20 @@ jobs:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Sync dbt project to MWAA S3 bucket
-        # MWAA workers run: aws s3 sync s3://{bucket}/dbt/platform-dbt-analytics/ /tmp/dbt_workspace/
-        # at the start of each dbt task. Syncing here means dbt changes reach MWAA
-        # without any environment update.
+      - name: Set dbt S3 destination
+        id: dbt-dest
         env:
-          MWAA_BUCKET: edp-${{ env.ENV }}-${{ needs.terraform-apply.outputs.account_id }}-mwaa-dags
+          ACCOUNT_ID: ${{ needs.terraform-apply.outputs.account_id }}
         run: |
-          aws s3 sync . "s3://${MWAA_BUCKET}/dbt/platform-dbt-analytics/" \
+          if [ "${{ inputs.orchestrator }}" = "step-functions" ]; then
+            echo "bucket=edp-${{ env.ENV }}-${ACCOUNT_ID}-bronze" >> "$GITHUB_OUTPUT"
+          else
+            echo "bucket=edp-${{ env.ENV }}-${ACCOUNT_ID}-mwaa-dags" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sync dbt project to S3
+        run: |
+          aws s3 sync . "s3://${{ steps.dbt-dest.outputs.bucket }}/dbt/platform-dbt-analytics/" \
             --delete \
             --exclude ".git/*" \
             --exclude ".github/*" \
@@ -154,12 +165,13 @@ jobs:
             --exclude "target/*" \
             --exclude "dbt_packages/*" \
             --exclude "logs/*"
-          echo "dbt project synced to s3://${MWAA_BUCKET}/dbt/platform-dbt-analytics/"
+          echo "dbt project synced to s3://${{ steps.dbt-dest.outputs.bucket }}/dbt/platform-dbt-analytics/"
 
-# ── Job 3: Upload DAG to MWAA S3 bucket (parallel after terraform-apply) ─────
+# ── Job 3: Upload DAG to MWAA (MWAA only, parallel after terraform-apply) ────
 
   upload-dag:
     name: Upload DAG to MWAA (${{ inputs.env }})
+    if: ${{ inputs.orchestrator == 'mwaa' }}
     needs: terraform-apply
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
@@ -187,9 +199,6 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Assert MWAA is AVAILABLE
-        # Abort if MWAA is still CREATING or UPDATING. This should not happen
-        # because terraform-apply waits for MWAA to reach AVAILABLE before
-        # completing — but this is a safety net.
         run: |
           STATUS=$(aws mwaa get-environment \
             --name "${MWAA_ENV_NAME}" \
@@ -210,13 +219,316 @@ jobs:
             --exclude "__pycache__/*" \
             --exclude "*.pyc"
           echo "DAGs uploaded to s3://${MWAA_BUCKET}/dags/"
-          echo "MWAA picks up new DAG files within ~30 seconds."
 
-# ── Job 4: Build and deploy analytics agent (parallel after terraform-apply) ──
+# ── Job 4: Trigger Step Functions pipeline and poll until completion ──────────
+
+  trigger-step-functions:
+    name: Run Step Functions pipeline (${{ inputs.env }})
+    if: ${{ inputs.orchestrator == 'step-functions' }}
+    needs: [sync-dbt]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV:        ${{ inputs.env }}
+      AWS_REGION: eu-central-1
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Start Step Functions execution
+        id: start-execution
+        env:
+          ACCOUNT_ID: ${{ needs.terraform-apply.outputs.account_id || vars.AWS_ACCOUNT_ID }}
+        run: |
+          STATE_MACHINE_ARN="arn:aws:states:${AWS_REGION}:${ACCOUNT_ID}:stateMachine:edp-${ENV}-pipeline"
+          echo "Starting execution: ${STATE_MACHINE_ARN}"
+
+          EXECUTION_ARN=$(aws stepfunctions start-execution \
+            --state-machine-arn "${STATE_MACHINE_ARN}" \
+            --query executionArn \
+            --output text)
+
+          echo "execution_arn=${EXECUTION_ARN}" >> "$GITHUB_OUTPUT"
+          echo "Execution started: ${EXECUTION_ARN}"
+
+      - name: Poll until success or failure (timeout 30 min)
+        run: |
+          EXECUTION_ARN="${{ steps.start-execution.outputs.execution_arn }}"
+          MAX_ATTEMPTS=60
+          SLEEP_SECONDS=30
+          ATTEMPT=0
+
+          while [ "${ATTEMPT}" -lt "${MAX_ATTEMPTS}" ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Poll ${ATTEMPT}/${MAX_ATTEMPTS} — $(date -u '+%H:%M:%S UTC')"
+
+            STATUS=$(aws stepfunctions describe-execution \
+              --execution-arn "${EXECUTION_ARN}" \
+              --query status \
+              --output text)
+
+            echo "  Status: ${STATUS}"
+
+            case "${STATUS}" in
+              SUCCEEDED)
+                echo "Pipeline completed successfully."
+                exit 0
+                ;;
+              FAILED|TIMED_OUT|ABORTED)
+                echo "Pipeline ${STATUS}. Check the Step Functions console for details."
+                exit 1
+                ;;
+              RUNNING)
+                echo "  Still running. Waiting ${SLEEP_SECONDS}s..."
+                sleep "${SLEEP_SECONDS}"
+                ;;
+              *)
+                echo "  Unexpected status '${STATUS}'. Waiting ${SLEEP_SECONDS}s..."
+                sleep "${SLEEP_SECONDS}"
+                ;;
+            esac
+          done
+
+          echo "Timed out after $((MAX_ATTEMPTS * SLEEP_SECONDS / 60)) minutes."
+          exit 1
+
+# ── Job 5: Trigger MWAA DAG and poll until completion (MWAA only) ─────────────
+
+  trigger-mwaa:
+    name: Run edp_pipeline DAG (${{ inputs.env }})
+    if: ${{ inputs.orchestrator == 'mwaa' }}
+    needs: [sync-dbt, upload-dag]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV:           ${{ inputs.env }}
+      AWS_REGION:    eu-central-1
+      MWAA_ENV_NAME: edp-${{ inputs.env }}-mwaa
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Wait for edp_pipeline DAG to be registered by scheduler
+        run: |
+          MAX_WAIT=18
+          FOUND=0
+
+          for i in $(seq 1 "${MAX_WAIT}"); do
+            RESPONSE=$(aws mwaa create-cli-token \
+              --name "${MWAA_ENV_NAME}" \
+              --output json)
+            CLI_TOKEN=$(echo "${RESPONSE}" | jq -r '.CliToken')
+            WEB_HOSTNAME=$(echo "${RESPONSE}" | jq -r '.WebServerHostname')
+
+            RAW=$(curl -s \
+              -X POST "https://${WEB_HOSTNAME}/aws_mwaa/cli" \
+              -H "Authorization: Bearer ${CLI_TOKEN}" \
+              -H "Content-Type: text/plain" \
+              --data "dags list -o json" \
+              | jq -r '.stdout // ""' | base64 --decode 2>/dev/null || echo "")
+
+            if echo "${RAW}" | python3 -c "
+          import sys, json
+          try:
+              dags = json.loads(sys.stdin.read())
+              ids = [d.get('dag_id','') for d in dags]
+              print('found' if 'edp_pipeline' in ids else 'not_found')
+          except Exception:
+              print('not_found')
+          " | grep -q found; then
+              echo "edp_pipeline registered (attempt ${i}/${MAX_WAIT})."
+              FOUND=1
+              break
+            fi
+
+            echo "Attempt ${i}/${MAX_WAIT}: DAG not yet registered. Waiting 10s..."
+            sleep 10
+          done
+
+          if [ "${FOUND}" -eq 0 ]; then
+            echo "edp_pipeline did not appear in Airflow within 3 minutes."
+            exit 1
+          fi
+
+      - name: Unpause edp_pipeline DAG
+        run: |
+          RESPONSE=$(aws mwaa create-cli-token \
+            --name "${MWAA_ENV_NAME}" \
+            --output json)
+          CLI_TOKEN=$(echo "${RESPONSE}" | jq -r '.CliToken')
+          WEB_HOSTNAME=$(echo "${RESPONSE}" | jq -r '.WebServerHostname')
+
+          curl -s -X POST "https://${WEB_HOSTNAME}/aws_mwaa/cli" \
+            -H "Authorization: Bearer ${CLI_TOKEN}" \
+            -H "Content-Type: text/plain" \
+            --data "dags unpause edp_pipeline" | jq -r '.stdout // ""' | base64 --decode 2>/dev/null || true
+
+      - name: Trigger edp_pipeline DAG via MWAA CLI
+        run: |
+          RESPONSE=$(aws mwaa create-cli-token \
+            --name "${MWAA_ENV_NAME}" \
+            --output json)
+          CLI_TOKEN=$(echo "${RESPONSE}" | jq -r '.CliToken')
+          WEB_HOSTNAME=$(echo "${RESPONSE}" | jq -r '.WebServerHostname')
+
+          HTTP_STATUS=$(curl -s \
+            -o /tmp/trigger_out.json \
+            -w "%{http_code}" \
+            -X POST "https://${WEB_HOSTNAME}/aws_mwaa/cli" \
+            -H "Authorization: Bearer ${CLI_TOKEN}" \
+            -H "Content-Type: text/plain" \
+            --data "dags trigger edp_pipeline")
+
+          echo "HTTP status: ${HTTP_STATUS}"
+          STDOUT=""
+          STDERR=""
+          if [ -s /tmp/trigger_out.json ]; then
+            STDOUT=$(jq -r '.stdout // ""' /tmp/trigger_out.json | base64 --decode 2>/dev/null || true)
+            STDERR=$(jq -r '.stderr // ""' /tmp/trigger_out.json | base64 --decode 2>/dev/null || true)
+            [ -n "${STDOUT}" ] && echo "stdout: ${STDOUT}"
+            [ -n "${STDERR}" ] && echo "stderr: ${STDERR}"
+          fi
+
+          if [ "${HTTP_STATUS}" != "200" ]; then
+            echo "DAG trigger failed (HTTP ${HTTP_STATUS})."
+            exit 1
+          fi
+
+          if echo "${STDERR}" | grep -qi "error\|exception\|failed\|not found"; then
+            echo "Airflow CLI returned an error. Trigger did not succeed."
+            exit 1
+          fi
+
+          echo "edp_pipeline triggered. Verifying run was created (up to 25s)..."
+          RUN_FOUND=0
+          for i in 1 2 3 4 5; do
+            sleep 5
+            VERIFY_RESP=$(aws mwaa create-cli-token \
+              --name "${MWAA_ENV_NAME}" \
+              --output json)
+            VERIFY_TOKEN=$(echo "${VERIFY_RESP}" | jq -r '.CliToken')
+            VERIFY_HOST=$(echo "${VERIFY_RESP}" | jq -r '.WebServerHostname')
+            RAW=$(curl -s \
+              -X POST "https://${VERIFY_HOST}/aws_mwaa/cli" \
+              -H "Authorization: Bearer ${VERIFY_TOKEN}" \
+              -H "Content-Type: text/plain" \
+              --data "dags list-runs --dag-id edp_pipeline -o json" \
+              | jq -r '.stdout // ""' | base64 --decode 2>/dev/null || echo "")
+            STATE=$(echo "${RAW}" | python3 -c "
+          import sys, json
+          try:
+              runs = json.loads(sys.stdin.read())
+              print(runs[0].get('state','unknown') if runs else 'no_runs')
+          except Exception:
+              print('no_runs')
+          " 2>/dev/null || echo "no_runs")
+            echo "  Verify attempt ${i}/5: state=${STATE}"
+            if [ "${STATE}" != "no_runs" ]; then
+              RUN_FOUND=1
+              break
+            fi
+          done
+
+          if [ "${RUN_FOUND}" -eq 0 ]; then
+            echo "DAG run was not created within 25s of trigger."
+            exit 1
+          fi
+
+      - name: Poll edp_pipeline until success or failure (timeout 30 min)
+        run: |
+          MAX_ATTEMPTS=60
+          SLEEP_SECONDS=30
+          ATTEMPT=0
+
+          while [ "${ATTEMPT}" -lt "${MAX_ATTEMPTS}" ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Poll ${ATTEMPT}/${MAX_ATTEMPTS} — $(date -u '+%H:%M:%S UTC')"
+
+            RESPONSE=$(aws mwaa create-cli-token \
+              --name "${MWAA_ENV_NAME}" \
+              --output json)
+            CLI_TOKEN=$(echo "${RESPONSE}" | jq -r '.CliToken')
+            WEB_HOSTNAME=$(echo "${RESPONSE}" | jq -r '.WebServerHostname')
+
+            HTTP_STATUS=$(curl -s \
+              -o /tmp/poll_out.json \
+              -w "%{http_code}" \
+              -X POST "https://${WEB_HOSTNAME}/aws_mwaa/cli" \
+              -H "Authorization: Bearer ${CLI_TOKEN}" \
+              -H "Content-Type: text/plain" \
+              --data "dags list-runs --dag-id edp_pipeline -o json")
+
+            if [ "${HTTP_STATUS}" != "200" ]; then
+              echo "  Poll request failed (HTTP ${HTTP_STATUS}), retrying..."
+              sleep "${SLEEP_SECONDS}"
+              continue
+            fi
+
+            RAW=$(jq -r '.stdout // ""' /tmp/poll_out.json | base64 --decode 2>/dev/null || echo "")
+
+            STATE=$(echo "${RAW}" | python3 -c "
+          import sys, json
+          try:
+              runs = json.loads(sys.stdin.read())
+              if runs:
+                  print(runs[0].get('state', 'unknown'))
+              else:
+                  print('no_runs')
+          except Exception:
+              print('parse_error')
+          " 2>/dev/null || echo "unknown")
+
+            echo "  Most recent run state: ${STATE}"
+
+            case "${STATE}" in
+              success)
+                echo "edp_pipeline completed successfully."
+                exit 0
+                ;;
+              failed)
+                echo "edp_pipeline FAILED. Check the MWAA Airflow UI for task logs."
+                exit 1
+                ;;
+              running|queued|no_runs|unknown|parse_error)
+                echo "  Still in progress. Waiting ${SLEEP_SECONDS}s..."
+                sleep "${SLEEP_SECONDS}"
+                ;;
+              *)
+                echo "  Unexpected state '${STATE}'. Waiting ${SLEEP_SECONDS}s..."
+                sleep "${SLEEP_SECONDS}"
+                ;;
+            esac
+          done
+
+          echo "Timed out after $((MAX_ATTEMPTS * SLEEP_SECONDS / 60)) minutes."
+          exit 1
+
+# ── Job 6: Build and deploy analytics agent ───────────────────────────────────
+# Runs after whichever trigger job ran. The skipped job counts as success
+# for the needs check, so deploy-agent runs when either job completes.
 
   deploy-agent:
     name: Build and deploy analytics agent (${{ inputs.env }})
-    needs: trigger-and-poll-pipeline
+    needs: [trigger-step-functions, trigger-mwaa]
+    if: ${{ always() && (needs.trigger-step-functions.result == 'success' || needs.trigger-mwaa.result == 'success') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
 
@@ -280,9 +592,6 @@ jobs:
           image:           ${{ steps.build-image.outputs.image }}
 
       - name: Deploy new task definition to ECS service
-        # Registers the new task definition revision and rolls out the ECS
-        # service to the new image. Waits until the new task is healthy and
-        # the old task is stopped before succeeding.
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition:            ${{ steps.task-def.outputs.task-definition }}
@@ -290,261 +599,20 @@ jobs:
           cluster:                    edp-${{ env.ENV }}-analytics-agent
           wait-for-service-stability: true
 
-# ── Job 5: Trigger edp_pipeline DAG and poll until completion ─────────────────
-
-  trigger-and-poll-pipeline:
-    name: Run edp_pipeline DAG (${{ inputs.env }})
-    needs: [sync-dbt, upload-dag]
-    runs-on: ubuntu-latest
-    environment: ${{ inputs.env }}
-
-    permissions:
-      id-token: write
-      contents: read
-
-    env:
-      ENV:           ${{ inputs.env }}
-      AWS_REGION:    eu-central-1
-      MWAA_ENV_NAME: edp-${{ inputs.env }}-mwaa
-
-    steps:
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Wait for edp_pipeline DAG to be registered by scheduler
-        # The DAG file was just uploaded to S3. MWAA's scheduler needs up to
-        # 90 seconds to parse it and register it in the Airflow database.
-        # Triggering before registration silently creates no run, causing the
-        # poll step to see no_runs for the full timeout. This step polls
-        # dags list until edp_pipeline appears (up to 3 minutes).
-        run: |
-          MAX_WAIT=18   # 18 × 10s = 3 minutes
-          FOUND=0
-
-          for i in $(seq 1 "${MAX_WAIT}"); do
-            RESPONSE=$(aws mwaa create-cli-token \
-              --name "${MWAA_ENV_NAME}" \
-              --output json)
-            CLI_TOKEN=$(echo "${RESPONSE}" | jq -r '.CliToken')
-            WEB_HOSTNAME=$(echo "${RESPONSE}" | jq -r '.WebServerHostname')
-
-            RAW=$(curl -s \
-              -X POST "https://${WEB_HOSTNAME}/aws_mwaa/cli" \
-              -H "Authorization: Bearer ${CLI_TOKEN}" \
-              -H "Content-Type: text/plain" \
-              --data "dags list -o json" \
-              | jq -r '.stdout // ""' | base64 --decode 2>/dev/null || echo "")
-
-            if echo "${RAW}" | python3 -c "
-          import sys, json
-          try:
-              dags = json.loads(sys.stdin.read())
-              ids = [d.get('dag_id','') for d in dags]
-              print('found' if 'edp_pipeline' in ids else 'not_found')
-          except Exception:
-              print('not_found')
-          " | grep -q found; then
-              echo "edp_pipeline registered (attempt ${i}/${MAX_WAIT})."
-              FOUND=1
-              break
-            fi
-
-            echo "Attempt ${i}/${MAX_WAIT}: DAG not yet registered. Waiting 10s..."
-            sleep 10
-          done
-
-          if [ "${FOUND}" -eq 0 ]; then
-            echo "edp_pipeline did not appear in Airflow within 3 minutes."
-            exit 1
-          fi
-
-      - name: Unpause edp_pipeline DAG
-        # New MWAA environments default to all DAGs paused. Unpausing is idempotent.
-        run: |
-          RESPONSE=$(aws mwaa create-cli-token \
-            --name "${MWAA_ENV_NAME}" \
-            --output json)
-          CLI_TOKEN=$(echo "${RESPONSE}" | jq -r '.CliToken')
-          WEB_HOSTNAME=$(echo "${RESPONSE}" | jq -r '.WebServerHostname')
-
-          curl -s -X POST "https://${WEB_HOSTNAME}/aws_mwaa/cli" \
-            -H "Authorization: Bearer ${CLI_TOKEN}" \
-            -H "Content-Type: text/plain" \
-            --data "dags unpause edp_pipeline" | jq -r '.stdout // ""' | base64 --decode 2>/dev/null || true
-
-      - name: Trigger edp_pipeline DAG via MWAA CLI
-        # Gets a short-lived MWAA CLI token (valid 60 s) and POSTs the trigger
-        # command to the MWAA webserver CLI endpoint.
-        # Fails fast if Airflow returns an error in the response body stderr field —
-        # MWAA always returns HTTP 200, so errors only appear in the CLI stderr.
-        # After triggering, polls up to 5 times (every 5 s) to confirm a run was
-        # actually created before entering the long 30-min poll loop.
-        run: |
-          RESPONSE=$(aws mwaa create-cli-token \
-            --name "${MWAA_ENV_NAME}" \
-            --output json)
-          CLI_TOKEN=$(echo "${RESPONSE}" | jq -r '.CliToken')
-          WEB_HOSTNAME=$(echo "${RESPONSE}" | jq -r '.WebServerHostname')
-
-          HTTP_STATUS=$(curl -s \
-            -o /tmp/trigger_out.json \
-            -w "%{http_code}" \
-            -X POST "https://${WEB_HOSTNAME}/aws_mwaa/cli" \
-            -H "Authorization: Bearer ${CLI_TOKEN}" \
-            -H "Content-Type: text/plain" \
-            --data "dags trigger edp_pipeline")
-
-          echo "HTTP status: ${HTTP_STATUS}"
-          STDOUT=""
-          STDERR=""
-          if [ -s /tmp/trigger_out.json ]; then
-            STDOUT=$(jq -r '.stdout // ""' /tmp/trigger_out.json | base64 --decode 2>/dev/null || true)
-            STDERR=$(jq -r '.stderr // ""' /tmp/trigger_out.json | base64 --decode 2>/dev/null || true)
-            [ -n "${STDOUT}" ] && echo "stdout: ${STDOUT}"
-            [ -n "${STDERR}" ] && echo "stderr: ${STDERR}"
-          fi
-
-          if [ "${HTTP_STATUS}" != "200" ]; then
-            echo "DAG trigger failed (HTTP ${HTTP_STATUS})."
-            exit 1
-          fi
-
-          # MWAA returns HTTP 200 even when Airflow itself errors. Check stderr.
-          if echo "${STDERR}" | grep -qi "error\|exception\|failed\|not found"; then
-            echo "Airflow CLI returned an error. Trigger did not succeed."
-            exit 1
-          fi
-
-          echo "edp_pipeline triggered. Verifying run was created (up to 25s)..."
-          RUN_FOUND=0
-          for i in 1 2 3 4 5; do
-            sleep 5
-            VERIFY_RESP=$(aws mwaa create-cli-token \
-              --name "${MWAA_ENV_NAME}" \
-              --output json)
-            VERIFY_TOKEN=$(echo "${VERIFY_RESP}" | jq -r '.CliToken')
-            VERIFY_HOST=$(echo "${VERIFY_RESP}" | jq -r '.WebServerHostname')
-            RAW=$(curl -s \
-              -X POST "https://${VERIFY_HOST}/aws_mwaa/cli" \
-              -H "Authorization: Bearer ${VERIFY_TOKEN}" \
-              -H "Content-Type: text/plain" \
-              --data "dags list-runs --dag-id edp_pipeline -o json" \
-              | jq -r '.stdout // ""' | base64 --decode 2>/dev/null || echo "")
-            STATE=$(echo "${RAW}" | python3 -c "
-          import sys, json
-          try:
-              runs = json.loads(sys.stdin.read())
-              print(runs[0].get('state','unknown') if runs else 'no_runs')
-          except Exception:
-              print('no_runs')
-          " 2>/dev/null || echo "no_runs")
-            echo "  Verify attempt ${i}/5: state=${STATE}"
-            if [ "${STATE}" != "no_runs" ]; then
-              RUN_FOUND=1
-              break
-            fi
-          done
-
-          if [ "${RUN_FOUND}" -eq 0 ]; then
-            echo "DAG run was not created within 25s of trigger. Check MWAA Airflow UI."
-            echo "Possible causes: DAG still paused, DAG import error, or webserver not ready."
-            exit 1
-          fi
-
-      - name: Poll edp_pipeline until success or failure (timeout 30 min)
-        # Fetches a fresh MWAA CLI token each iteration (tokens are valid ~60 s).
-        # Calls "dags list-runs --dag-id edp_pipeline -o json" and inspects the
-        # state of the most recent run (index 0 in the JSON array = newest run).
-        # Polls every 30 s for up to 30 min (60 attempts).
-        run: |
-          MAX_ATTEMPTS=60
-          SLEEP_SECONDS=30
-          ATTEMPT=0
-
-          while [ "${ATTEMPT}" -lt "${MAX_ATTEMPTS}" ]; do
-            ATTEMPT=$((ATTEMPT + 1))
-            echo "Poll ${ATTEMPT}/${MAX_ATTEMPTS} — $(date -u '+%H:%M:%S UTC')"
-
-            # Fresh token each iteration — they expire in ~60 s
-            RESPONSE=$(aws mwaa create-cli-token \
-              --name "${MWAA_ENV_NAME}" \
-              --output json)
-            CLI_TOKEN=$(echo "${RESPONSE}" | jq -r '.CliToken')
-            WEB_HOSTNAME=$(echo "${RESPONSE}" | jq -r '.WebServerHostname')
-
-            HTTP_STATUS=$(curl -s \
-              -o /tmp/poll_out.json \
-              -w "%{http_code}" \
-              -X POST "https://${WEB_HOSTNAME}/aws_mwaa/cli" \
-              -H "Authorization: Bearer ${CLI_TOKEN}" \
-              -H "Content-Type: text/plain" \
-              --data "dags list-runs --dag-id edp_pipeline -o json")
-
-            if [ "${HTTP_STATUS}" != "200" ]; then
-              echo "  Poll request failed (HTTP ${HTTP_STATUS}), retrying..."
-              sleep "${SLEEP_SECONDS}"
-              continue
-            fi
-
-            RAW=$(jq -r '.stdout // ""' /tmp/poll_out.json | base64 --decode 2>/dev/null || echo "")
-
-            # Parse the state of the most recent run (first element in JSON array)
-            STATE=$(echo "${RAW}" | python3 -c "
-          import sys, json
-          try:
-              runs = json.loads(sys.stdin.read())
-              if runs:
-                  print(runs[0].get('state', 'unknown'))
-              else:
-                  print('no_runs')
-          except Exception:
-              print('parse_error')
-          " 2>/dev/null || echo "unknown")
-
-            echo "  Most recent run state: ${STATE}"
-
-            case "${STATE}" in
-              success)
-                echo ""
-                echo "edp_pipeline completed successfully."
-                exit 0
-                ;;
-              failed)
-                echo ""
-                echo "edp_pipeline FAILED. Check the MWAA Airflow UI for task logs."
-                exit 1
-                ;;
-              running|queued|no_runs|unknown|parse_error)
-                echo "  Still in progress. Waiting ${SLEEP_SECONDS}s..."
-                sleep "${SLEEP_SECONDS}"
-                ;;
-              *)
-                echo "  Unexpected state '${STATE}'. Waiting ${SLEEP_SECONDS}s..."
-                sleep "${SLEEP_SECONDS}"
-                ;;
-            esac
-          done
-
-          echo ""
-          echo "Timed out after $((MAX_ATTEMPTS * SLEEP_SECONDS / 60)) minutes."
-          echo "Check the MWAA Airflow UI to see where the pipeline stalled."
-          exit 1
-
-# ── Job 6: Session ready — print access URLs ─────────────────────────────────
+# ── Job 7: Session ready — print access URLs ──────────────────────────────────
 
   session-ready:
     name: Session ready
     needs: [terraform-apply, deploy-agent]
+    if: ${{ always() && needs.deploy-agent.result == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
       - name: Print session summary
         env:
-          ENV:     ${{ inputs.env }}
-          ALB_DNS: ${{ needs.terraform-apply.outputs.alb_dns }}
+          ENV:          ${{ inputs.env }}
+          ORCHESTRATOR: ${{ inputs.orchestrator }}
+          ALB_DNS:      ${{ needs.terraform-apply.outputs.alb_dns }}
         run: |
           echo ""
           echo "================================================"
@@ -552,6 +620,7 @@ jobs:
           echo "================================================"
           echo ""
           echo "  Environment  : ${ENV}"
+          echo "  Orchestrator : ${ORCHESTRATOR}"
           echo ""
           echo "  Streamlit UI (open in browser from within VPC):"
           echo "    http://${ALB_DNS}:8501"
