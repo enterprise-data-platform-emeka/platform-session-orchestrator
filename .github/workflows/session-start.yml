@@ -16,8 +16,8 @@ name: Session Start
 # Orchestrator choices:
 #   step-functions (default): Step Functions state machine. No separate DAG upload.
 #     Fast: no 25-min MWAA startup wait. Run this for every dev session.
-#   mwaa: Full MWAA Airflow environment. Slower but shows the Airflow UI.
-#     Use this when recording the YouTube demo.
+#   mwaa: Full MWAA Airflow environment with visual task dependency graph in the Airflow UI.
+#     Use this when a visual task graph or full Airflow capabilities are needed.
 #
 # Prerequisites (one-time setup):
 #   1. terraform-bootstrap applied — creates OIDC provider and github-actions-role.
@@ -42,7 +42,7 @@ on:
         type: choice
         options: [dev, staging, prod]
       orchestrator:
-        description: "Orchestrator (step-functions for daily use, mwaa for YouTube demo)"
+        description: "Orchestrator (step-functions for fast startup, mwaa for Airflow UI with visual task graph)"
         required: true
         default: step-functions
         type: choice
