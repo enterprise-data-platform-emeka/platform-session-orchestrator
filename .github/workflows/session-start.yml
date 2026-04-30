@@ -29,6 +29,8 @@ name: Session Start
 # Required secrets / variables (Settings -> Secrets and variables -> Actions):
 #   Secrets:
 #     GH_PAT          — GitHub PAT with repo scope (for cross-repo checkout)
+#     SLACK_APP_TOKEN — Slack Socket Mode app token, required only when deploy_slack_mcp=true
+#     SLACK_BOT_TOKEN — Slack bot token, required only when deploy_slack_mcp=true
 #   Variables (per Environment: dev / staging / prod):
 #     AWS_ACCOUNT_ID  — 12-digit AWS account ID (not sensitive, used in resource names)
 
@@ -51,6 +53,11 @@ on:
         description: "RDS master password (only needed when module ingestion is enabled)"
         required: false
         type: string
+      deploy_slack_mcp:
+        description: "Deploy Slack MCP gateway after analytics agent"
+        required: true
+        default: false
+        type: boolean
 
 # ── Job 1: Apply all AWS infrastructure ──────────────────────────────────────
 
@@ -102,6 +109,14 @@ jobs:
       - name: Terraform apply
         run: |
           cd environments/${{ env.ENV }}
+          if [ "${{ inputs.deploy_slack_mcp }}" = "true" ]; then
+            export TF_VAR_enable_slack_mcp_gateway=true
+            export TF_VAR_slack_mcp_desired_count=0
+            echo "Slack MCP gateway infrastructure enabled. ECS service starts after image deploy."
+          else
+            export TF_VAR_enable_slack_mcp_gateway=false
+            echo "Slack MCP gateway infrastructure disabled for this session."
+          fi
           terraform apply -auto-approve
 
       - name: Capture Terraform outputs
@@ -599,12 +614,139 @@ jobs:
           cluster:                    edp-${{ env.ENV }}-analytics-agent
           wait-for-service-stability: true
 
-# ── Job 7: Session ready — print access URLs ──────────────────────────────────
+# ── Job 7: Optionally build and deploy Slack MCP gateway ─────────────────────
+
+  deploy-slack-mcp:
+    name: Build and deploy Slack MCP gateway (${{ inputs.env }})
+    needs: [terraform-apply, deploy-agent]
+    if: ${{ always() && needs.deploy-agent.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV:            ${{ inputs.env }}
+      AWS_REGION:     eu-central-1
+      CONTAINER_NAME: gateway
+
+    steps:
+      - name: Skip when Slack MCP is disabled
+        if: ${{ !inputs.deploy_slack_mcp }}
+        run: echo "deploy_slack_mcp is false. Skipping Slack MCP gateway deploy."
+
+      - name: Validate Slack secrets
+        if: ${{ inputs.deploy_slack_mcp }}
+        env:
+          SLACK_APP_TOKEN: ${{ secrets.SLACK_APP_TOKEN }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        run: |
+          if [ -z "${SLACK_APP_TOKEN}" ] || [ -z "${SLACK_BOT_TOKEN}" ]; then
+            echo "SLACK_APP_TOKEN and SLACK_BOT_TOKEN secrets are required when deploy_slack_mcp=true."
+            exit 1
+          fi
+
+      - name: Checkout platform-slack-mcp-gateway
+        if: ${{ inputs.deploy_slack_mcp }}
+        uses: actions/checkout@v4
+        with:
+          repository: enterprise-data-platform-emeka/platform-slack-mcp-gateway
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Configure AWS credentials (OIDC)
+        if: ${{ inputs.deploy_slack_mcp }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Store Slack tokens in Secrets Manager
+        if: ${{ inputs.deploy_slack_mcp }}
+        env:
+          SLACK_APP_TOKEN: ${{ secrets.SLACK_APP_TOKEN }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        run: |
+          aws secretsmanager put-secret-value \
+            --secret-id "/edp/${ENV}/slack_mcp/slack_app_token" \
+            --secret-string "${SLACK_APP_TOKEN}" \
+            >/dev/null
+          aws secretsmanager put-secret-value \
+            --secret-id "/edp/${ENV}/slack_mcp/slack_bot_token" \
+            --secret-string "${SLACK_BOT_TOKEN}" \
+            >/dev/null
+          echo "Slack token secrets updated in Secrets Manager."
+
+      - name: Log in to Amazon ECR
+        if: ${{ inputs.deploy_slack_mcp }}
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to ECR
+        if: ${{ inputs.deploy_slack_mcp }}
+        id: build-image
+        env:
+          ECR_REGISTRY:   ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: edp-${{ env.ENV }}-slack-mcp-gateway
+          IMAGE_TAG:      sha-${{ github.sha }}
+        run: |
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker build \
+            -t "${IMAGE_URI}" \
+            -t "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
+            .
+          docker push "${IMAGE_URI}"
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+          echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
+      - name: Download current task definition
+        if: ${{ inputs.deploy_slack_mcp }}
+        env:
+          TASK_FAMILY: edp-${{ env.ENV }}-slack-mcp-gateway
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${TASK_FAMILY}" \
+            --query taskDefinition \
+            > task-definition.json
+
+      - name: Update task definition with new image
+        if: ${{ inputs.deploy_slack_mcp }}
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name:  ${{ env.CONTAINER_NAME }}
+          image:           ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy new task definition to ECS service
+        if: ${{ inputs.deploy_slack_mcp }}
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition:            ${{ steps.task-def.outputs.task-definition }}
+          service:                    edp-${{ env.ENV }}-slack-mcp-gateway
+          cluster:                    edp-${{ env.ENV }}-slack-mcp-gateway
+          wait-for-service-stability: false
+
+      - name: Scale Slack MCP gateway to one task
+        if: ${{ inputs.deploy_slack_mcp }}
+        run: |
+          aws ecs update-service \
+            --cluster "edp-${ENV}-slack-mcp-gateway" \
+            --service "edp-${ENV}-slack-mcp-gateway" \
+            --desired-count 1 \
+            --force-new-deployment
+          aws ecs wait services-stable \
+            --cluster "edp-${ENV}-slack-mcp-gateway" \
+            --services "edp-${ENV}-slack-mcp-gateway"
+          echo "Slack MCP gateway deployed and stable."
+
+# ── Job 8: Session ready — print access URLs ──────────────────────────────────
 
   session-ready:
     name: Session ready
-    needs: [terraform-apply, deploy-agent]
-    if: ${{ always() && needs.deploy-agent.result == 'success' }}
+    needs: [terraform-apply, deploy-agent, deploy-slack-mcp]
+    if: ${{ always() && needs.deploy-agent.result == 'success' && needs.deploy-slack-mcp.result == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -612,6 +754,7 @@ jobs:
         env:
           ENV:          ${{ inputs.env }}
           ORCHESTRATOR: ${{ inputs.orchestrator }}
+          DEPLOY_SLACK_MCP: ${{ inputs.deploy_slack_mcp }}
           ALB_DNS:      ${{ needs.terraform-apply.outputs.alb_dns }}
         run: |
           echo ""
@@ -630,6 +773,11 @@ jobs:
           echo "      -H 'Content-Type: application/json' \\"
           echo "      -d '{\"question\": \"Which country has the highest revenue?\"}'"
           echo ""
+          if [ "${DEPLOY_SLACK_MCP}" = "true" ]; then
+            echo "  Slack MCP Gateway:"
+            echo "    Deployed. Ask @EDP Analytics Agent in #analytics-agent-demo."
+            echo ""
+          fi
           echo "  When done: run the Session Destroy workflow."
           echo "  Cost so far: ~\$0.30-\$0.50 (infra up, no queries yet)"
           echo ""
