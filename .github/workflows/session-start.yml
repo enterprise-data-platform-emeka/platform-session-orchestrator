@@ -648,7 +648,7 @@ jobs:
         if: ${{ inputs.deploy_slack_mcp }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          role-to-assume: arn:aws:iam::${{ needs.terraform-apply.outputs.account_id }}:role/edp-${{ env.ENV }}-github-actions-role
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Seed Slack tokens into Secrets Manager
