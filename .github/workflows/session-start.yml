@@ -637,6 +637,20 @@ jobs:
         if: ${{ !inputs.deploy_slack_mcp }}
         run: echo "deploy_slack_mcp is false. Skipping Slack MCP gateway deploy."
 
+      - name: Checkout platform-slack-mcp-gateway
+        if: ${{ inputs.deploy_slack_mcp }}
+        uses: actions/checkout@v4
+        with:
+          repository: enterprise-data-platform-emeka/platform-slack-mcp-gateway
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Configure AWS credentials (OIDC)
+        if: ${{ inputs.deploy_slack_mcp }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+
       - name: Seed Slack tokens into Secrets Manager
         if: ${{ inputs.deploy_slack_mcp }}
         env:
@@ -652,20 +666,6 @@ jobs:
             --secret-string "${SLACK_BOT_TOKEN}" \
             >/dev/null
           echo "Slack tokens seeded into Secrets Manager."
-
-      - name: Checkout platform-slack-mcp-gateway
-        if: ${{ inputs.deploy_slack_mcp }}
-        uses: actions/checkout@v4
-        with:
-          repository: enterprise-data-platform-emeka/platform-slack-mcp-gateway
-          token: ${{ secrets.GH_PAT }}
-
-      - name: Configure AWS credentials (OIDC)
-        if: ${{ inputs.deploy_slack_mcp }}
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
-          aws-region: ${{ env.AWS_REGION }}
 
       - name: Log in to Amazon ECR
         if: ${{ inputs.deploy_slack_mcp }}
