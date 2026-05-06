@@ -372,12 +372,12 @@ jobs:
           set +e
           OUTPUT=$(aws dms start-replication-task \
             --replication-task-arn "${DMS_TASK_ARN}" \
-            --start-replication-task-type start-replication 2>&1)
+            --start-replication-task-type reload-target 2>&1)
           STATUS=$?
           set -e
           if [ "${STATUS}" -ne 0 ]; then
             if echo "${OUTPUT}" | grep -qi "InvalidResourceStateFault"; then
-              echo "DMS task is already started or not in a startable state. Continuing to readiness check."
+              echo "DMS task is already running. Continuing to readiness check."
             else
               echo "${OUTPUT}"
               exit "${STATUS}"
