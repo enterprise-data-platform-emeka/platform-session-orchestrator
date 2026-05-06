@@ -120,6 +120,7 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "~1.6"
+          terraform_wrapper: false
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -172,7 +173,7 @@ jobs:
         run: |
           cd environments/${{ env.ENV }}
           optional_output() {
-            terraform output -json "$1" 2>/dev/null | jq -r '. // ""'
+            terraform output -raw "$1" 2>/dev/null || true
           }
           echo "alb_dns=$(optional_output analytics_agent_alb_dns)" >> "$GITHUB_OUTPUT"
           echo "cdc_simulator_ecr_url=$(optional_output cdc_simulator_ecr_url)" >> "$GITHUB_OUTPUT"
@@ -184,7 +185,7 @@ jobs:
           echo "rds_identifier=$(optional_output rds_identifier)" >> "$GITHUB_OUTPUT"
           {
             echo "cdc_simulator_private_subnet_ids<<JSON"
-            terraform output -json cdc_simulator_private_subnet_ids 2>/dev/null || echo "[]"
+            terraform output -json cdc_simulator_private_subnet_ids 2>/dev/null | jq -c '. // []' || echo "[]"
             echo "JSON"
           } >> "$GITHUB_OUTPUT"
 
@@ -302,7 +303,7 @@ jobs:
           SECURITY_GROUP_ID: ${{ needs.terraform-apply.outputs.cdc_simulator_security_group_id }}
           PRIVATE_SUBNET_IDS: ${{ needs.terraform-apply.outputs.cdc_simulator_private_subnet_ids }}
         run: |
-          SUBNETS=$(echo "${PRIVATE_SUBNET_IDS}" | jq -r '. | join(",")')
+          SUBNETS=$(jq -cer 'if type == "array" then join(",") else error("PRIVATE_SUBNET_IDS must be a JSON array") end' <<< "${PRIVATE_SUBNET_IDS}")
           NETWORK_CONFIG="awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUP_ID}],assignPublicIp=DISABLED}"
           OVERRIDES=$(jq -cn \
             --arg name "${CONTAINER_NAME}" \
@@ -398,7 +399,7 @@ jobs:
           DURATION_MINUTES: ${{ inputs.cdc_simulator_duration_minutes }}
         run: |
           DURATION_SECONDS=$((DURATION_MINUTES * 60))
-          SUBNETS=$(echo "${PRIVATE_SUBNET_IDS}" | jq -r '. | join(",")')
+          SUBNETS=$(jq -cer 'if type == "array" then join(",") else error("PRIVATE_SUBNET_IDS must be a JSON array") end' <<< "${PRIVATE_SUBNET_IDS}")
           NETWORK_CONFIG="awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUP_ID}],assignPublicIp=DISABLED}"
           OVERRIDES=$(jq -cn \
             --arg name "${CONTAINER_NAME}" \
