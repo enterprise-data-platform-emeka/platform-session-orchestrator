@@ -20,6 +20,10 @@ name: Session Start
 #   mwaa: Full MWAA Airflow environment with visual task dependency graph in the Airflow UI.
 #     Use this when a visual task graph or full Airflow capabilities are needed.
 #
+# Serving choices:
+#   athena-only (default): Gold data stays queryable in Athena/S3. No Redshift cost.
+#   redshift-bi: Creates Redshift Serverless as the BI serving layer.
+#
 # Prerequisites (one-time setup):
 #   1. terraform-bootstrap applied — creates OIDC provider and github-actions-role.
 #   2. terraform-github-setup applied — creates GitHub Environments (dev/staging/prod)
@@ -52,6 +56,12 @@ on:
         default: step-functions
         type: choice
         options: [step-functions, mwaa]
+      serving_layer:
+        description: "BI/query serving layer"
+        required: true
+        default: athena-only
+        type: choice
+        options: [athena-only, redshift-bi]
       db_password:
         description: "RDS master password. Prefer environment secret DB_PASSWORD; this input is a manual fallback."
         required: false
@@ -155,8 +165,17 @@ jobs:
             export TF_VAR_enable_cdc_simulator=false
             echo "CDC simulator infrastructure disabled for this session."
           fi
-          if [ -n "${REDSHIFT_ADMIN_PASSWORD}" ]; then
+          if [ "${{ inputs.serving_layer }}" = "redshift-bi" ]; then
+            if [ -z "${REDSHIFT_ADMIN_PASSWORD}" ]; then
+              echo "REDSHIFT_ADMIN_PASSWORD is required when serving_layer=redshift-bi."
+              exit 1
+            fi
+            export TF_VAR_enable_serving=true
             export TF_VAR_redshift_admin_password="${REDSHIFT_ADMIN_PASSWORD}"
+            echo "Redshift Serverless serving layer enabled for BI."
+          else
+            export TF_VAR_enable_serving=false
+            echo "Athena/S3 serving only. Redshift Serverless disabled for this session."
           fi
           if [ "${{ inputs.deploy_slack_mcp }}" = "true" ]; then
             export TF_VAR_enable_slack_mcp_gateway=true
@@ -1088,6 +1107,7 @@ jobs:
         env:
           ENV:          ${{ inputs.env }}
           ORCHESTRATOR: ${{ inputs.orchestrator }}
+          SERVING_LAYER: ${{ inputs.serving_layer }}
           DEPLOY_SLACK_MCP: ${{ inputs.deploy_slack_mcp }}
           ALB_DNS:      ${{ needs.terraform-apply.outputs.alb_dns }}
         run: |
@@ -1098,6 +1118,7 @@ jobs:
           echo ""
           echo "  Environment  : ${ENV}"
           echo "  Orchestrator : ${ORCHESTRATOR}"
+          echo "  Serving layer: ${SERVING_LAYER}"
           echo ""
           echo "  Streamlit UI (open in browser from within VPC):"
           echo "    http://${ALB_DNS}:8501"
