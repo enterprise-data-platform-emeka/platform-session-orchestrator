@@ -165,6 +165,16 @@ jobs:
             export TF_VAR_enable_cdc_simulator=false
             echo "CDC simulator infrastructure disabled for this session."
           fi
+          if [ "${{ inputs.orchestrator }}" = "step-functions" ]; then
+            export TF_VAR_enable_step_functions=true
+            export TF_VAR_enable_mwaa=false
+            echo "Step Functions orchestrator enabled for this session."
+          else
+            export TF_VAR_enable_step_functions=false
+            export TF_VAR_enable_mwaa=true
+            echo "MWAA orchestrator enabled for this session."
+          fi
+          export TF_VAR_enable_analytics_agent=true
           if [ "${{ inputs.serving_layer }}" = "redshift-bi" ]; then
             if [ -z "${REDSHIFT_ADMIN_PASSWORD}" ]; then
               echo "REDSHIFT_ADMIN_PASSWORD is required when serving_layer=redshift-bi."
