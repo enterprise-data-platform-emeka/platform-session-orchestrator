@@ -6,6 +6,7 @@ name: Session Start
 #
 #   terraform-apply (~5 min for Step Functions, ~25 min for MWAA)
 #       |
+#       |--- cdc-source-ready (optional; seed RDS, start DMS, launch live injection)
 #       |--- deploy-glue-scripts (seconds) ───────────────────\
 #       |--- sync-dbt (seconds) ──────────────────────────────+──> trigger-pipeline (~10 min)
 #       |--- upload-dag (MWAA only, seconds) ─────────────────/          |
@@ -29,6 +30,8 @@ name: Session Start
 # Required secrets / variables (Settings -> Secrets and variables -> Actions):
 #   Secrets (per Environment: dev / staging / prod):
 #     GH_PAT          — GitHub PAT with repo scope (for cross-repo checkout)
+#     DB_PASSWORD     — RDS source database password (required when run_cdc_simulator=true)
+#     REDSHIFT_ADMIN_PASSWORD — Redshift admin password (required when serving is enabled)
 #     SLACK_APP_TOKEN — Slack Socket Mode app token (xapp-...), used when deploy_slack_mcp=true
 #     SLACK_BOT_TOKEN — Slack bot OAuth token (xoxb-...), used when deploy_slack_mcp=true
 #   Variables (per Environment: dev / staging / prod):
@@ -50,14 +53,33 @@ on:
         type: choice
         options: [step-functions, mwaa]
       db_password:
-        description: "RDS master password (only needed when module ingestion is enabled)"
+        description: "RDS master password. Prefer environment secret DB_PASSWORD; this input is a manual fallback."
         required: false
         type: string
+      redshift_admin_password:
+        description: "Redshift admin password. Prefer environment secret REDSHIFT_ADMIN_PASSWORD; this input is a manual fallback."
+        required: false
+        type: string
+      run_cdc_simulator:
+        description: "Create dev CDC infrastructure, seed RDS, start DMS, and run live injection."
+        required: true
+        default: false
+        type: boolean
+      cdc_simulator_duration_minutes:
+        description: "Live CDC injection duration after seed/bootstrap"
+        required: true
+        default: "10"
+        type: choice
+        options: ["5", "10", "15", "30", "60"]
       deploy_slack_mcp:
         description: "Deploy Slack MCP gateway after analytics agent"
         required: true
         default: false
         type: boolean
+
+concurrency:
+  group: session-start-${{ inputs.env }}
+  cancel-in-progress: false
 
 # ── Job 1: Apply all AWS infrastructure ──────────────────────────────────────
 
@@ -68,8 +90,16 @@ jobs:
     environment: ${{ inputs.env }}
 
     outputs:
-      alb_dns:    ${{ steps.tf-outputs.outputs.alb_dns }}
-      account_id: ${{ steps.account.outputs.id }}
+      alb_dns:                           ${{ steps.tf-outputs.outputs.alb_dns }}
+      account_id:                        ${{ steps.account.outputs.id }}
+      cdc_simulator_ecr_url:             ${{ steps.tf-outputs.outputs.cdc_simulator_ecr_url }}
+      cdc_simulator_cluster:             ${{ steps.tf-outputs.outputs.cdc_simulator_cluster }}
+      cdc_simulator_task_definition:     ${{ steps.tf-outputs.outputs.cdc_simulator_task_definition }}
+      cdc_simulator_container_name:      ${{ steps.tf-outputs.outputs.cdc_simulator_container_name }}
+      cdc_simulator_security_group_id:   ${{ steps.tf-outputs.outputs.cdc_simulator_security_group_id }}
+      cdc_simulator_private_subnet_ids:  ${{ steps.tf-outputs.outputs.cdc_simulator_private_subnet_ids }}
+      dms_replication_task_arn:          ${{ steps.tf-outputs.outputs.dms_replication_task_arn }}
+      rds_identifier:                    ${{ steps.tf-outputs.outputs.rds_identifier }}
 
     permissions:
       id-token: write
@@ -107,8 +137,26 @@ jobs:
           terraform init
 
       - name: Terraform apply
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD || inputs.db_password }}
+          REDSHIFT_ADMIN_PASSWORD: ${{ secrets.REDSHIFT_ADMIN_PASSWORD || inputs.redshift_admin_password }}
         run: |
           cd environments/${{ env.ENV }}
+          if [ "${{ inputs.run_cdc_simulator }}" = "true" ]; then
+            if [ -z "${DB_PASSWORD}" ]; then
+              echo "DB_PASSWORD is required when run_cdc_simulator=true."
+              exit 1
+            fi
+            export TF_VAR_enable_cdc_simulator=true
+            export TF_VAR_db_password="${DB_PASSWORD}"
+            echo "CDC simulator infrastructure enabled for this session."
+          else
+            export TF_VAR_enable_cdc_simulator=false
+            echo "CDC simulator infrastructure disabled for this session."
+          fi
+          if [ -n "${REDSHIFT_ADMIN_PASSWORD}" ]; then
+            export TF_VAR_redshift_admin_password="${REDSHIFT_ADMIN_PASSWORD}"
+          fi
           if [ "${{ inputs.deploy_slack_mcp }}" = "true" ]; then
             export TF_VAR_enable_slack_mcp_gateway=true
             export TF_VAR_slack_mcp_desired_count=0
@@ -123,9 +171,253 @@ jobs:
         id: tf-outputs
         run: |
           cd environments/${{ env.ENV }}
-          echo "alb_dns=$(terraform output -raw analytics_agent_alb_dns)" >> "$GITHUB_OUTPUT"
+          optional_output() {
+            terraform output -json "$1" 2>/dev/null | jq -r '. // ""'
+          }
+          echo "alb_dns=$(optional_output analytics_agent_alb_dns)" >> "$GITHUB_OUTPUT"
+          echo "cdc_simulator_ecr_url=$(optional_output cdc_simulator_ecr_url)" >> "$GITHUB_OUTPUT"
+          echo "cdc_simulator_cluster=$(optional_output cdc_simulator_cluster)" >> "$GITHUB_OUTPUT"
+          echo "cdc_simulator_task_definition=$(optional_output cdc_simulator_task_definition)" >> "$GITHUB_OUTPUT"
+          echo "cdc_simulator_container_name=$(optional_output cdc_simulator_container_name)" >> "$GITHUB_OUTPUT"
+          echo "cdc_simulator_security_group_id=$(optional_output cdc_simulator_security_group_id)" >> "$GITHUB_OUTPUT"
+          echo "dms_replication_task_arn=$(optional_output dms_replication_task_arn)" >> "$GITHUB_OUTPUT"
+          echo "rds_identifier=$(optional_output rds_identifier)" >> "$GITHUB_OUTPUT"
+          {
+            echo "cdc_simulator_private_subnet_ids<<JSON"
+            terraform output -json cdc_simulator_private_subnet_ids 2>/dev/null || echo "[]"
+            echo "JSON"
+          } >> "$GITHUB_OUTPUT"
 
-# ── Job 2: Upload Glue scripts to S3 (parallel after terraform-apply) ────────
+# ── Job 2: Prepare CDC source data (optional, selected at workflow dispatch) ─
+
+  cdc-source-ready:
+    name: CDC source ready (${{ inputs.env }})
+    needs: terraform-apply
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV:        ${{ inputs.env }}
+      AWS_REGION: eu-central-1
+
+    steps:
+      - name: Skip when CDC simulator is disabled
+        if: ${{ !inputs.run_cdc_simulator }}
+        run: echo "run_cdc_simulator=false. Continuing without source bootstrap."
+
+      - name: Checkout platform-cdc-simulator
+        if: ${{ inputs.run_cdc_simulator }}
+        uses: actions/checkout@v4
+        with:
+          repository: enterprise-data-platform-emeka/platform-cdc-simulator
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Configure AWS credentials (OIDC)
+        if: ${{ inputs.run_cdc_simulator }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ needs.terraform-apply.outputs.account_id }}:role/edp-${{ env.ENV }}-github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        if: ${{ inputs.run_cdc_simulator }}
+        id: login-ecr-cdc
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push simulator image
+        if: ${{ inputs.run_cdc_simulator }}
+        id: build-cdc-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr-cdc.outputs.registry }}
+          ECR_REPOSITORY: edp-${{ env.ENV }}-cdc-simulator
+          IMAGE_TAG: sha-${{ github.sha }}
+        run: |
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker build \
+            -t "${IMAGE_URI}" \
+            -t "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
+            .
+          docker push "${IMAGE_URI}"
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+          echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
+      - name: Register simulator task definition revision
+        if: ${{ inputs.run_cdc_simulator }}
+        id: cdc-task-def
+        env:
+          TASK_DEFINITION: ${{ needs.terraform-apply.outputs.cdc_simulator_task_definition }}
+          CONTAINER_NAME: ${{ needs.terraform-apply.outputs.cdc_simulator_container_name }}
+          IMAGE_URI: ${{ steps.build-cdc-image.outputs.image }}
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${TASK_DEFINITION}" \
+            --query taskDefinition \
+            > task-definition.json
+
+          jq --arg IMAGE_URI "${IMAGE_URI}" --arg CONTAINER_NAME "${CONTAINER_NAME}" '
+            .containerDefinitions |= map(
+              if .name == $CONTAINER_NAME then .image = $IMAGE_URI else . end
+            )
+            | del(
+                .taskDefinitionArn,
+                .revision,
+                .status,
+                .requiresAttributes,
+                .compatibilities,
+                .registeredAt,
+                .registeredBy
+              )
+          ' task-definition.json > register-task-definition.json
+
+          REGISTERED_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://register-task-definition.json \
+            --query taskDefinition.taskDefinitionArn \
+            --output text)
+          echo "task_definition=${REGISTERED_ARN}" >> "$GITHUB_OUTPUT"
+          echo "Registered ${REGISTERED_ARN}"
+
+      - name: Reboot RDS so logical replication parameters are active
+        if: ${{ inputs.run_cdc_simulator }}
+        env:
+          RDS_IDENTIFIER: ${{ needs.terraform-apply.outputs.rds_identifier }}
+        run: |
+          aws rds reboot-db-instance \
+            --db-instance-identifier "${RDS_IDENTIFIER}" \
+            >/dev/null
+          aws rds wait db-instance-available \
+            --db-instance-identifier "${RDS_IDENTIFIER}"
+          echo "RDS ${RDS_IDENTIFIER} is available after reboot."
+
+      - name: Run schema + seed bootstrap task
+        if: ${{ inputs.run_cdc_simulator }}
+        id: cdc-bootstrap
+        env:
+          CLUSTER: ${{ needs.terraform-apply.outputs.cdc_simulator_cluster }}
+          TASK_DEFINITION: ${{ steps.cdc-task-def.outputs.task_definition }}
+          CONTAINER_NAME: ${{ needs.terraform-apply.outputs.cdc_simulator_container_name }}
+          SECURITY_GROUP_ID: ${{ needs.terraform-apply.outputs.cdc_simulator_security_group_id }}
+          PRIVATE_SUBNET_IDS: ${{ needs.terraform-apply.outputs.cdc_simulator_private_subnet_ids }}
+        run: |
+          SUBNETS=$(echo "${PRIVATE_SUBNET_IDS}" | jq -r '. | join(",")')
+          NETWORK_CONFIG="awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUP_ID}],assignPublicIp=DISABLED}"
+          OVERRIDES=$(jq -cn \
+            --arg name "${CONTAINER_NAME}" \
+            '{containerOverrides:[{name:$name,command:["bootstrap"]}]}')
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "${CLUSTER}" \
+            --task-definition "${TASK_DEFINITION}" \
+            --launch-type FARGATE \
+            --network-configuration "${NETWORK_CONFIG}" \
+            --overrides "${OVERRIDES}" \
+            --query 'tasks[0].taskArn' \
+            --output text)
+
+          if [ -z "${TASK_ARN}" ] || [ "${TASK_ARN}" = "None" ]; then
+            echo "Failed to start CDC bootstrap task."
+            exit 1
+          fi
+
+          echo "Started CDC bootstrap task ${TASK_ARN}"
+          aws ecs wait tasks-stopped --cluster "${CLUSTER}" --tasks "${TASK_ARN}"
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster "${CLUSTER}" \
+            --tasks "${TASK_ARN}" \
+            --query 'tasks[0].containers[0].exitCode' \
+            --output text)
+          if [ "${EXIT_CODE}" != "0" ]; then
+            echo "CDC bootstrap task failed with exit code ${EXIT_CODE}."
+            exit 1
+          fi
+
+      - name: Start DMS full-load and CDC task
+        if: ${{ inputs.run_cdc_simulator }}
+        env:
+          DMS_TASK_ARN: ${{ needs.terraform-apply.outputs.dms_replication_task_arn }}
+        run: |
+          set +e
+          OUTPUT=$(aws dms start-replication-task \
+            --replication-task-arn "${DMS_TASK_ARN}" \
+            --start-replication-task-type start-replication 2>&1)
+          STATUS=$?
+          set -e
+          if [ "${STATUS}" -ne 0 ]; then
+            if echo "${OUTPUT}" | grep -qi "InvalidResourceStateFault"; then
+              echo "DMS task is already started or not in a startable state. Continuing to readiness check."
+            else
+              echo "${OUTPUT}"
+              exit "${STATUS}"
+            fi
+          else
+            echo "DMS replication task started."
+          fi
+
+      - name: Wait for seeded Bronze data in S3
+        if: ${{ inputs.run_cdc_simulator }}
+        env:
+          ACCOUNT_ID: ${{ needs.terraform-apply.outputs.account_id }}
+        run: |
+          BUCKET="edp-${ENV}-${ACCOUNT_ID}-bronze"
+          TABLES="customers products orders order_items payments shipments"
+          MAX_ATTEMPTS=40
+          SLEEP_SECONDS=30
+
+          for attempt in $(seq 1 "${MAX_ATTEMPTS}"); do
+            echo "Bronze readiness check ${attempt}/${MAX_ATTEMPTS}"
+            MISSING=""
+            for table in ${TABLES}; do
+              if ! aws s3 ls "s3://${BUCKET}/raw/public/${table}/" --recursive | grep -q ".parquet"; then
+                MISSING="${MISSING} ${table}"
+              fi
+            done
+
+            if [ -z "${MISSING}" ]; then
+              echo "Bronze has Parquet files for all source tables."
+              exit 0
+            fi
+
+            echo "Still waiting for:${MISSING}"
+            sleep "${SLEEP_SECONDS}"
+          done
+
+          echo "Timed out waiting for DMS to land seeded data in Bronze."
+          exit 1
+
+      - name: Start bounded live injection task
+        if: ${{ inputs.run_cdc_simulator }}
+        env:
+          CLUSTER: ${{ needs.terraform-apply.outputs.cdc_simulator_cluster }}
+          TASK_DEFINITION: ${{ steps.cdc-task-def.outputs.task_definition }}
+          CONTAINER_NAME: ${{ needs.terraform-apply.outputs.cdc_simulator_container_name }}
+          SECURITY_GROUP_ID: ${{ needs.terraform-apply.outputs.cdc_simulator_security_group_id }}
+          PRIVATE_SUBNET_IDS: ${{ needs.terraform-apply.outputs.cdc_simulator_private_subnet_ids }}
+          DURATION_MINUTES: ${{ inputs.cdc_simulator_duration_minutes }}
+        run: |
+          DURATION_SECONDS=$((DURATION_MINUTES * 60))
+          SUBNETS=$(echo "${PRIVATE_SUBNET_IDS}" | jq -r '. | join(",")')
+          NETWORK_CONFIG="awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUP_ID}],assignPublicIp=DISABLED}"
+          OVERRIDES=$(jq -cn \
+            --arg name "${CONTAINER_NAME}" \
+            --arg duration "${DURATION_SECONDS}" \
+            '{containerOverrides:[{name:$name,command:["simulate","--duration-seconds",$duration]}]}')
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "${CLUSTER}" \
+            --task-definition "${TASK_DEFINITION}" \
+            --launch-type FARGATE \
+            --network-configuration "${NETWORK_CONFIG}" \
+            --overrides "${OVERRIDES}" \
+            --query 'tasks[0].taskArn' \
+            --output text)
+
+          echo "Started bounded live CDC injection task: ${TASK_ARN}"
+          echo "Workflow will continue while this task runs for ${DURATION_SECONDS}s."
+
+# ── Job 3: Upload Glue scripts to S3 (parallel after terraform-apply) ────────
 # Uploads all six Silver PySpark job scripts, run_dbt.py, and the shared lib.zip
 # to the Glue scripts S3 bucket. This must run every session because
 # terraform-apply recreates the bucket from scratch, wiping any previously
@@ -292,7 +584,7 @@ jobs:
   trigger-step-functions:
     name: Run Step Functions pipeline (${{ inputs.env }})
     if: ${{ inputs.orchestrator == 'step-functions' }}
-    needs: [sync-dbt, deploy-glue-scripts]
+    needs: [sync-dbt, deploy-glue-scripts, cdc-source-ready, terraform-apply]
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
 
@@ -373,7 +665,7 @@ jobs:
   trigger-mwaa:
     name: Run edp_pipeline DAG (${{ inputs.env }})
     if: ${{ inputs.orchestrator == 'mwaa' }}
-    needs: [sync-dbt, upload-dag, deploy-glue-scripts]
+    needs: [sync-dbt, upload-dag, deploy-glue-scripts, cdc-source-ready]
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
 
