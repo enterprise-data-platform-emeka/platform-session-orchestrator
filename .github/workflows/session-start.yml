@@ -499,6 +499,52 @@ jobs:
           echo "Glue scripts uploaded to s3://${SCRIPTS_BUCKET}/glue-scripts/"
           aws s3 ls "s3://${SCRIPTS_BUCKET}/glue-scripts/"
 
+      - name: Create or update Silver Glue job definitions
+        env:
+          SCRIPTS_BUCKET: edp-${{ env.ENV }}-${{ steps.account.outputs.id }}-glue-scripts
+          BRONZE_BUCKET:  edp-${{ env.ENV }}-${{ steps.account.outputs.id }}-bronze
+          SILVER_BUCKET:  edp-${{ env.ENV }}-${{ steps.account.outputs.id }}-silver
+          QUARANTINE_BUCKET: edp-${{ env.ENV }}-${{ steps.account.outputs.id }}-quarantine
+        run: |
+          for job in dim_customer dim_product fact_orders fact_order_items fact_payments fact_shipments; do
+            echo "Ensuring edp-${{ env.ENV }}-${job}..."
+
+            DEFAULT_ARGS=$(cat <<JSON
+          {
+            "--job-language": "python",
+            "--extra-py-files": "s3://${SCRIPTS_BUCKET}/glue-scripts/lib.zip",
+            "--BRONZE_PATH": "s3://${BRONZE_BUCKET}/",
+            "--SILVER_PATH": "s3://${SILVER_BUCKET}/",
+            "--QUARANTINE_PATH": "s3://${QUARANTINE_BUCKET}/",
+            "--enable-glue-datacatalog": "true",
+            "--enable-job-insights": "true",
+            "--enable-spark-ui": "true",
+            "--spark-event-logs-path": "s3://${SCRIPTS_BUCKET}/spark-logs/"
+          }
+          JSON
+            )
+
+            aws glue create-job \
+              --name "edp-${{ env.ENV }}-${job}" \
+              --role "edp-${{ env.ENV }}-glue-role" \
+              --command "Name=glueetl,ScriptLocation=s3://${SCRIPTS_BUCKET}/glue-scripts/${job}.py,PythonVersion=3" \
+              --default-arguments "${DEFAULT_ARGS}" \
+              --glue-version "4.0" \
+              --number-of-workers 2 \
+              --worker-type G.1X \
+            2>/dev/null \
+            || aws glue update-job \
+              --job-name "edp-${{ env.ENV }}-${job}" \
+              --job-update "{
+                \"Role\": \"edp-${{ env.ENV }}-glue-role\",
+                \"GlueVersion\": \"4.0\",
+                \"NumberOfWorkers\": 2,
+                \"WorkerType\": \"G.1X\",
+                \"Command\": {\"Name\": \"glueetl\", \"ScriptLocation\": \"s3://${SCRIPTS_BUCKET}/glue-scripts/${job}.py\", \"PythonVersion\": \"3\"},
+                \"DefaultArguments\": ${DEFAULT_ARGS}
+              }"
+          done
+
 # ── Job 3: Sync dbt project to S3 (parallel after terraform-apply) ───────────
 # Step Functions: syncs to s3://{bronze-bucket}/dbt/platform-dbt-analytics/
 #   The run_dbt Glue job downloads it from there at runtime.
