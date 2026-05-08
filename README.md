@@ -30,34 +30,44 @@ Orchestrates a full session from scratch. It checks out each component repo usin
 
 ```mermaid
 flowchart TD
-    TF[terraform-apply\n~5 min Step Functions\n~25 min MWAA]
+    TF["terraform-apply\n5 min — Step Functions\n25 min — MWAA"]:::infra
 
-    TF --> CDC[cdc-source-ready\noptional]
-    TF --> GLUE[deploy-glue-scripts\nseconds]
-    TF --> DBT[sync-dbt\nseconds]
-    TF --> DAG[upload-dag\nMWAA only]
+    subgraph PREP["Parallel after apply"]
+        direction LR
+        CDC["cdc-source-ready\noptional"]:::opt
+        GLUE["deploy-glue-scripts"]:::fast
+        DBT["sync-dbt"]:::fast
+    end
+    DAG["upload-dag\nMWAA only"]:::mwaanode
+
+    TF --> PREP
+    TF --> DAG
 
     subgraph CHOICE["One trigger runs — chosen at dispatch"]
         direction LR
-        SFN[trigger-step-functions\n~10 min]
-        MWAA_T[trigger-mwaa\n~6-8 min]
+        SFN["trigger-step-functions\n10 min"]:::sfn
+        MWAA_T["trigger-mwaa\n6-8 min"]:::mwaanode
     end
 
-    CDC --> SFN
-    GLUE --> SFN
-    DBT --> SFN
-
-    CDC --> MWAA_T
-    GLUE --> MWAA_T
-    DBT --> MWAA_T
+    PREP --> SFN
+    PREP --> MWAA_T
     DAG --> MWAA_T
 
-    SFN --> AGENT[deploy-agent\n~5 min]
+    SFN --> AGENT["deploy-agent\n5 min"]:::deploy
     MWAA_T --> AGENT
 
-    AGENT --> SLACK[deploy-slack-mcp\noptional]
-    SLACK --> READY[session-ready]
-    READY --> UI([Streamlit UI\nhttp://alb-dns:8501\nAnalytics Agent live])
+    AGENT --> SLACK["deploy-slack-mcp\noptional"]:::opt
+    SLACK --> READY["session-ready"]:::ready
+    READY --> UI(["Streamlit UI\nhttp://alb-dns:8501"]):::ui
+
+    classDef infra   fill:#4B5320,stroke:#3a4119,color:#fff,font-weight:bold
+    classDef fast    fill:#e8f5e9,stroke:#66bb6a,color:#1b5e20
+    classDef opt     fill:#fff8e1,stroke:#ffd54f,color:#5d4037
+    classDef sfn     fill:#dbeafe,stroke:#60a5fa,color:#1e3a8a,font-weight:bold
+    classDef mwaanode fill:#f3e8ff,stroke:#c084fc,color:#4c1d95,font-weight:bold
+    classDef deploy  fill:#e8eaf6,stroke:#7986cb,color:#1a237e
+    classDef ready   fill:#4B5320,stroke:#3a4119,color:#fff,font-weight:bold
+    classDef ui      fill:#f0f4e8,stroke:#4B5320,color:#33691e,font-weight:bold
 ```
 
 **Inputs:**
