@@ -6,15 +6,11 @@ name: Session Destroy
 # The job is skipped entirely if the confirmation does not match.
 #
 # What this destroys:
-#   All compute resources created by terraform-platform-infra-live: VPC (Virtual
-#   Private Cloud), MWAA (Amazon Managed Workflows for Apache Airflow), ECS
-#   (Elastic Container Service) Fargate tasks, ALB (Application Load Balancer),
-#   Glue, Athena, and all IAM (Identity and Access Management) roles.
-#
-# What this intentionally preserves:
-#   S3 (Simple Storage Service) data buckets (module.data_lake). These retain
-#   pipeline data, audit logs, and engineer logs between sessions. Skipped by
-#   targeting all other modules explicitly so no BucketNotEmpty errors occur.
+#   Everything created by terraform-platform-infra-live for the chosen
+#   environment: VPC (Virtual Private Cloud), MWAA (Amazon Managed Workflows
+#   for Apache Airflow), ECS (Elastic Container Service) Fargate tasks,
+#   ALB (Application Load Balancer), Glue, Athena, S3 (Simple Storage Service)
+#   data buckets, and all IAM (Identity and Access Management) roles.
 #
 # What this does NOT destroy:
 #   terraform-bootstrap resources (OIDC provider, github-actions-role, tfstate
@@ -90,19 +86,10 @@ jobs:
           cd environments/${{ env.ENV }}
           terraform init
 
-      - name: Terraform destroy (preserves S3 data buckets)
+      - name: Terraform destroy
         run: |
           cd environments/${{ env.ENV }}
-          TARGETS=$(terraform state list 2>/dev/null | \
-            sed 's/\..*//' | sort -u | \
-            grep '^module\.' | \
-            grep -v '^module\.data_lake$' | \
-            sed 's/^/-target=/' | tr '\n' ' ')
-          if [ -z "$TARGETS" ]; then
-            echo "No Terraform state found — nothing to destroy."
-          else
-            terraform destroy $TARGETS -auto-approve
-          fi
+          terraform destroy -auto-approve
 
       - name: Destroy summary
         run: |
@@ -111,8 +98,7 @@ jobs:
           echo "  SESSION DESTROYED"
           echo "================================================"
           echo ""
-          echo "  All ${ENV} compute resources have been torn down."
-          echo "  S3 data buckets are preserved (data_lake module retained)."
+          echo "  All ${ENV} AWS resources have been torn down."
           echo "  Typical session cost: ~\$1.50-\$2.50 for a 2-3 hour session."
           echo ""
           echo "  terraform-bootstrap resources (OIDC, tfstate bucket, lock"
