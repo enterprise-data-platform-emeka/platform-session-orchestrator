@@ -30,39 +30,44 @@ Orchestrates a full session from scratch. It checks out each component repo usin
 
 ```mermaid
 flowchart TD
-    TF(["🏗 terraform-apply\n5 min · Step Functions\n25 min · MWAA"]):::infra
+    TF["terraform-apply\n5 min — Step Functions\n25 min — MWAA"]:::infra
 
-    TF --> CDC["cdc-source-ready\noptional"]:::opt
-    TF --> GLUE["deploy-glue-scripts\nseconds"]:::fast
-    TF --> DBT["sync-dbt\nseconds"]:::fast
-    TF --> DAG["upload-dag\nMWAA only"]:::mwaanode
-
-    CDC & GLUE & DBT --> GATE(( )):::gate
-
-    subgraph CHOICE["one trigger runs — chosen at dispatch"]
+    subgraph PREP["Parallel after apply"]
         direction LR
-        SFN["⚡ Step Functions pipeline\n~10 min"]:::sfn
-        MWAA_T["☁ MWAA edp_pipeline DAG\n~6–8 min"]:::mwaanode
+        CDC["cdc-source-ready\noptional"]:::opt
+        GLUE["deploy-glue-scripts"]:::fast
+        DBT["sync-dbt"]:::fast
+    end
+    DAG["upload-dag\nMWAA only"]:::mwaanode
+
+    TF --> PREP
+    TF --> DAG
+
+    subgraph CHOICE["One trigger runs — chosen at dispatch"]
+        direction LR
+        SFN["trigger-step-functions\n10 min"]:::sfn
+        MWAA_T["trigger-mwaa\n6-8 min"]:::mwaanode
     end
 
-    GATE --> SFN
-    GATE --> MWAA_T
+    PREP --> SFN
+    PREP --> MWAA_T
     DAG --> MWAA_T
 
-    SFN & MWAA_T --> AGENT["🚀 deploy-agent\n~5 min"]:::deploy
-    AGENT --> SLACK["deploy-slack-mcp\noptional"]:::opt
-    SLACK --> READY(["session-ready"]):::ready
-    READY --> UI(["🌐 Streamlit UI\nhttp://alb-dns:8501"]):::ui
+    SFN --> AGENT["deploy-agent\n5 min"]:::deploy
+    MWAA_T --> AGENT
 
-    classDef infra  fill:#4B5320,stroke:#3a4119,color:#fff,font-weight:bold
-    classDef fast   fill:#e8f5e9,stroke:#66bb6a,color:#1b5e20
-    classDef opt    fill:#fff8e1,stroke:#ffd54f,color:#5d4037
-    classDef gate   fill:#94a3b8,stroke:#64748b,color:#fff
-    classDef sfn    fill:#dbeafe,stroke:#60a5fa,color:#1e3a8a,font-weight:bold
+    AGENT --> SLACK["deploy-slack-mcp\noptional"]:::opt
+    SLACK --> READY["session-ready"]:::ready
+    READY --> UI(["Streamlit UI\nhttp://alb-dns:8501"]):::ui
+
+    classDef infra   fill:#4B5320,stroke:#3a4119,color:#fff,font-weight:bold
+    classDef fast    fill:#e8f5e9,stroke:#66bb6a,color:#1b5e20
+    classDef opt     fill:#fff8e1,stroke:#ffd54f,color:#5d4037
+    classDef sfn     fill:#dbeafe,stroke:#60a5fa,color:#1e3a8a,font-weight:bold
     classDef mwaanode fill:#f3e8ff,stroke:#c084fc,color:#4c1d95,font-weight:bold
-    classDef deploy fill:#e8eaf6,stroke:#7986cb,color:#1a237e
-    classDef ready  fill:#4B5320,stroke:#3a4119,color:#fff,font-weight:bold
-    classDef ui     fill:#f0f4e8,stroke:#4B5320,color:#33691e,font-weight:bold
+    classDef deploy  fill:#e8eaf6,stroke:#7986cb,color:#1a237e
+    classDef ready   fill:#4B5320,stroke:#3a4119,color:#fff,font-weight:bold
+    classDef ui      fill:#f0f4e8,stroke:#4B5320,color:#33691e,font-weight:bold
 ```
 
 **Inputs:**
