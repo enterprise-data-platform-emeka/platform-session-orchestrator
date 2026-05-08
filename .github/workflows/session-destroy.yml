@@ -86,10 +86,8 @@ jobs:
           cd environments/${{ env.ENV }}
           terraform init
 
-      - name: Terraform destroy
-        run: |
-          cd environments/${{ env.ENV }}
-          terraform destroy -auto-approve
+      - name: Terraform destroy (preserves S3 data buckets)
+        run: make destroy-safe ${{ env.ENV }}
 
       - name: Destroy summary
         run: |
