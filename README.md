@@ -37,20 +37,27 @@ flowchart TD
     TF --> DBT[sync-dbt\nseconds]
     TF --> DAG[upload-dag\nMWAA only]
 
-    CDC --> SFN[trigger-step-functions\n~10 min]
+    subgraph CHOICE["One trigger runs — chosen at dispatch"]
+        direction LR
+        SFN[trigger-step-functions\n~10 min]
+        MWAA_T[trigger-mwaa\n~6-8 min]
+    end
+
+    CDC --> SFN
     GLUE --> SFN
     DBT --> SFN
 
-    CDC --> MWAA[trigger-mwaa\n~6-8 min]
-    GLUE --> MWAA
-    DBT --> MWAA
-    DAG --> MWAA
+    CDC --> MWAA_T
+    GLUE --> MWAA_T
+    DBT --> MWAA_T
+    DAG --> MWAA_T
 
     SFN --> AGENT[deploy-agent\n~5 min]
-    MWAA --> AGENT
+    MWAA_T --> AGENT
 
     AGENT --> SLACK[deploy-slack-mcp\noptional]
     SLACK --> READY[session-ready]
+    READY --> UI([Streamlit UI\nhttp://alb-dns:8501\nAnalytics Agent live])
 ```
 
 **Inputs:**
