@@ -86,6 +86,11 @@ on:
         required: true
         default: false
         type: boolean
+      deploy_analytics_web:
+        description: "Deploy custom HTML analytics dashboard after analytics agent"
+        required: true
+        default: false
+        type: boolean
 
 concurrency:
   group: session-start-${{ inputs.env }}
@@ -110,6 +115,7 @@ jobs:
       cdc_simulator_private_subnet_ids:  ${{ steps.tf-outputs.outputs.cdc_simulator_private_subnet_ids }}
       dms_replication_task_arn:          ${{ steps.tf-outputs.outputs.dms_replication_task_arn }}
       rds_identifier:                    ${{ steps.tf-outputs.outputs.rds_identifier }}
+      analytics_web_url:                 ${{ steps.tf-outputs.outputs.analytics_web_url }}
 
     permissions:
       id-token: write
@@ -195,6 +201,14 @@ jobs:
             export TF_VAR_enable_slack_mcp_gateway=false
             echo "Slack MCP gateway infrastructure disabled for this session."
           fi
+          if [ "${{ inputs.deploy_analytics_web }}" = "true" ]; then
+            export TF_VAR_enable_analytics_web=true
+            export TF_VAR_analytics_web_desired_count=0
+            echo "Analytics web dashboard infrastructure enabled. ECS service starts after image deploy."
+          else
+            export TF_VAR_enable_analytics_web=false
+            echo "Analytics web dashboard infrastructure disabled for this session."
+          fi
           terraform apply -auto-approve
 
       - name: Capture Terraform outputs
@@ -212,6 +226,7 @@ jobs:
           echo "cdc_simulator_security_group_id=$(optional_output cdc_simulator_security_group_id)" >> "$GITHUB_OUTPUT"
           echo "dms_replication_task_arn=$(optional_output dms_replication_task_arn)" >> "$GITHUB_OUTPUT"
           echo "rds_identifier=$(optional_output rds_identifier)" >> "$GITHUB_OUTPUT"
+          echo "analytics_web_url=$(optional_output analytics_web_url)" >> "$GITHUB_OUTPUT"
           {
             echo "cdc_simulator_private_subnet_ids<<JSON"
             terraform output -json cdc_simulator_private_subnet_ids 2>/dev/null | jq -c '. // []' || echo "[]"
@@ -1150,12 +1165,112 @@ jobs:
             --services "edp-${ENV}-slack-mcp-gateway"
           echo "Slack MCP gateway deployed and stable."
 
-# ── Job 9: Session ready — print access URLs ──────────────────────────────────
+# ── Job 9: Optionally build and deploy custom analytics web dashboard ────────
+
+  deploy-analytics-web:
+    name: Build and deploy analytics web (${{ inputs.env }})
+    needs: [terraform-apply, deploy-agent]
+    if: ${{ always() && needs.deploy-agent.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV:            ${{ inputs.env }}
+      AWS_REGION:     eu-central-1
+      CONTAINER_NAME: web
+
+    steps:
+      - name: Skip when analytics web is disabled
+        if: ${{ !inputs.deploy_analytics_web }}
+        run: echo "deploy_analytics_web is false. Skipping custom HTML analytics dashboard deploy."
+
+      - name: Checkout platform-analytics-web
+        if: ${{ inputs.deploy_analytics_web }}
+        uses: actions/checkout@v4
+        with:
+          repository: enterprise-data-platform-emeka/platform-analytics-web
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Configure AWS credentials (OIDC)
+        if: ${{ inputs.deploy_analytics_web }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ needs.terraform-apply.outputs.account_id }}:role/edp-${{ env.ENV }}-github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        if: ${{ inputs.deploy_analytics_web }}
+        id: login-ecr-web
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to ECR
+        if: ${{ inputs.deploy_analytics_web }}
+        id: build-web-image
+        env:
+          ECR_REGISTRY:   ${{ steps.login-ecr-web.outputs.registry }}
+          ECR_REPOSITORY: edp-${{ env.ENV }}-analytics-web
+          IMAGE_TAG:      sha-${{ github.sha }}
+        run: |
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker build \
+            -t "${IMAGE_URI}" \
+            -t "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
+            .
+          docker push "${IMAGE_URI}"
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+          echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
+      - name: Download current task definition
+        if: ${{ inputs.deploy_analytics_web }}
+        env:
+          TASK_FAMILY: edp-${{ env.ENV }}-analytics-web
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${TASK_FAMILY}" \
+            --query taskDefinition \
+            > task-definition.json
+
+      - name: Update task definition with new image
+        if: ${{ inputs.deploy_analytics_web }}
+        id: web-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name:  ${{ env.CONTAINER_NAME }}
+          image:           ${{ steps.build-web-image.outputs.image }}
+
+      - name: Deploy new task definition to ECS service
+        if: ${{ inputs.deploy_analytics_web }}
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition:            ${{ steps.web-task-def.outputs.task-definition }}
+          service:                    edp-${{ env.ENV }}-analytics-web
+          cluster:                    edp-${{ env.ENV }}-analytics-web
+          wait-for-service-stability: false
+
+      - name: Scale analytics web to one task
+        if: ${{ inputs.deploy_analytics_web }}
+        run: |
+          aws ecs update-service \
+            --cluster "edp-${ENV}-analytics-web" \
+            --service "edp-${ENV}-analytics-web" \
+            --desired-count 1 \
+            --force-new-deployment
+          aws ecs wait services-stable \
+            --cluster "edp-${ENV}-analytics-web" \
+            --services "edp-${ENV}-analytics-web"
+          echo "Analytics web dashboard deployed and stable."
+
+# ── Job 10: Session ready — print access URLs ─────────────────────────────────
 
   session-ready:
     name: Session ready
-    needs: [terraform-apply, deploy-agent, deploy-slack-mcp]
-    if: ${{ always() && needs.deploy-agent.result == 'success' && needs.deploy-slack-mcp.result == 'success' }}
+    needs: [terraform-apply, deploy-agent, deploy-slack-mcp, deploy-analytics-web]
+    if: ${{ always() && needs.deploy-agent.result == 'success' && needs.deploy-slack-mcp.result == 'success' && needs.deploy-analytics-web.result == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -1165,7 +1280,9 @@ jobs:
           ORCHESTRATOR: ${{ inputs.orchestrator }}
           SERVING_LAYER: ${{ inputs.serving_layer }}
           DEPLOY_SLACK_MCP: ${{ inputs.deploy_slack_mcp }}
+          DEPLOY_ANALYTICS_WEB: ${{ inputs.deploy_analytics_web }}
           ALB_DNS:      ${{ needs.terraform-apply.outputs.alb_dns }}
+          ANALYTICS_WEB_URL: ${{ needs.terraform-apply.outputs.analytics_web_url }}
         run: |
           echo ""
           echo "================================================"
@@ -1179,6 +1296,11 @@ jobs:
           echo "  Streamlit UI (open in browser from within VPC):"
           echo "    http://${ALB_DNS}:8501"
           echo ""
+          if [ "${DEPLOY_ANALYTICS_WEB}" = "true" ]; then
+            echo "  Custom HTML Analytics UI:"
+            echo "    ${ANALYTICS_WEB_URL}"
+            echo ""
+          fi
           echo "  FastAPI (curl from within VPC):"
           echo "    curl -s -X POST http://${ALB_DNS}/ask \\"
           echo "      -H 'Content-Type: application/json' \\"
