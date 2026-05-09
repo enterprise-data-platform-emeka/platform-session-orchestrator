@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>platform-session-orchestrator — HTML README</title>
+  <style>
+    :root {
+      --accent: #0891b2;
+      --page: #f8fafc;
+      --surface: #ffffff;
+      --surface-soft: #f1f5f9;
+      --ink: #0f172a;
+      --muted: #475569;
+      --line: #d8e2ee;
+      --shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 12%, transparent), transparent 34rem),
+        var(--page);
+    }
+    a { color: var(--accent); text-decoration: none; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      padding: 0.9rem 1.4rem;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(14px);
+    }
+    .brand { display: flex; align-items: center; gap: 0.75rem; font-weight: 900; }
+    .mark {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      background: var(--accent);
+      box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 28%, transparent);
+      font-size: 0.8rem;
+    }
+    .nav { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .nav a {
+      padding: 0.52rem 0.75rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 0.86rem;
+      font-weight: 750;
+    }
+    .wrap { width: min(1180px, calc(100vw - 2rem)); margin: 0 auto; padding: 1.2rem 0 4rem; }
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+      gap: 1rem;
+      align-items: stretch;
+      margin-top: 1rem;
+    }
+    .hero-card, .panel {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.94);
+      box-shadow: var(--shadow);
+    }
+    .hero-card { padding: 2rem; }
+    .eyebrow {
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 0.72rem;
+      font-weight: 950;
+    }
+    h1 {
+      margin: 0.45rem 0 0.8rem;
+      max-width: 820px;
+      font-size: clamp(2.2rem, 5vw, 4.4rem);
+      line-height: 0.95;
+      letter-spacing: -0.05em;
+    }
+    .intro { max-width: 820px; color: var(--muted); font-size: 1.03rem; line-height: 1.65; }
+    .meta {
+      display: grid;
+      gap: 0.7rem;
+      padding: 1rem;
+    }
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 1rem;
+      background: var(--surface-soft);
+    }
+    .metric span { display: block; color: var(--muted); font-size: 0.78rem; font-weight: 750; }
+    .metric strong { display: block; margin-top: 0.35rem; font-size: 1.6rem; color: var(--ink); }
+    .diagram { margin: 1rem 0; overflow: hidden; border-radius: 22px; border: 1px solid var(--line); box-shadow: var(--shadow); }
+    .diagram svg { display: block; width: 100%; height: auto; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 1rem; }
+    .panel { padding: 1.1rem; }
+    .panel h2, .panel h3 { margin: 0; }
+    .panel h2 { font-size: 1.25rem; }
+    .panel h3 { font-size: 1rem; }
+    .panel p { color: var(--muted); line-height: 1.58; }
+    .section-card {
+      min-height: 170px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.7rem;
+      border-top: 4px solid var(--accent);
+    }
+    .pill-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.85rem; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.42rem 0.62rem;
+      border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--accent) 7%, #fff);
+      color: #1f2937;
+      font-size: 0.83rem;
+      font-weight: 750;
+    }
+    .command-list { display: grid; gap: 0.55rem; margin-top: 0.9rem; }
+    code {
+      display: block;
+      padding: 0.74rem 0.85rem;
+      border-radius: 12px;
+      background: #111827;
+      color: #f8fafc;
+      overflow-wrap: anywhere;
+      font-family: "SFMono-Regular", "JetBrains Mono", monospace;
+      font-size: 0.84rem;
+    }
+    .wide { grid-column: 1 / -1; }
+    .footer { margin-top: 1.5rem; color: var(--muted); text-align: center; font-size: 0.9rem; }
+    @media (max-width: 900px) {
+      .hero, .grid { grid-template-columns: 1fr; }
+      .topbar { align-items: flex-start; flex-direction: column; }
+      h1 { font-size: 2.4rem; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><div class="mark">EDP</div><span>platform-session-orchestrator</span></div>
+    <nav class="nav">
+      <a href="../README.md">README.md</a>
+      <a href="#diagram">Diagram</a>
+      <a href="#sections">Sections</a>
+      <a href="#commands">Commands</a>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <div class="hero-card">
+        <div class="eyebrow">One-click platform session controller</div>
+        <h1>platform-session-orchestrator</h1>
+        <p class="intro">This repo is the lifecycle controller for the Enterprise Data Platform (EDP). It doesn&#039;t contain application code — it contains two GitHub Actions (GHA) workflows that start and destroy a full EDP session across all component repos.</p>
+        <div class="pill-row">
+          <span class="pill">GitHub Actions</span><span class="pill">Terraform</span><span class="pill">Step Functions</span><span class="pill">MWAA</span><span class="pill">ECS</span><span class="pill">Slack</span>
+        </div>
+      </div>
+      <aside class="panel meta" aria-label="README summary">
+        <div class="metric"><span>README length</span><strong>260</strong></div>
+        <div class="metric"><span>Major sections</span><strong>7</strong></div>
+        <div class="metric"><span>Code examples</span><strong>8</strong></div>
+        <div class="metric"><span>Tables</span><strong>17</strong></div>
+      </aside>
+    </section>
+
+    <section id="diagram" class="diagram">
+      
+    <svg viewBox="0 0 1120 260" role="img" aria-label="Repository workflow diagram">
+      <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L8,3 z" fill="#0891b2"/>
+        </marker>
+        <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+          <stop stop-color="#0891b2" stop-opacity="0.12"/>
+          <stop offset="1" stop-color="#ffffff" stop-opacity="1"/>
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="1120" height="260" rx="24" fill="url(#bg)"/>
+      <text x="32" y="48" fill="#0f172a" font-size="24" font-weight="900">How this repository fits into the platform</text>
+      <text x="32" y="76" fill="#475569" font-size="14">A compact visual reading path distilled from the README.</text>
+      
+        <g>
+          <rect x="24" y="96" width="158" height="72" rx="16" fill="#ffffff" stroke="#d8e2ee"/>
+          <circle cx="48" cy="132" r="12" fill="#0891b2" opacity="0.14"/>
+          <circle cx="48" cy="132" r="5" fill="#0891b2"/>
+          <text x="68" y="127" fill="#0f172a" font-size="15" font-weight="800">Start</text>
+          <text x="68" y="148" fill="#64748b" font-size="12">Step 1</text>
+          <path d="M 186 130 L 198 130" stroke="#0891b2" stroke-width="3" marker-end="url(#arrow)" opacity="0.72"/>
+        </g>
+        <g>
+          <rect x="206" y="96" width="158" height="72" rx="16" fill="#ffffff" stroke="#d8e2ee"/>
+          <circle cx="230" cy="132" r="12" fill="#0891b2" opacity="0.14"/>
+          <circle cx="230" cy="132" r="5" fill="#0891b2"/>
+          <text x="250" y="127" fill="#0f172a" font-size="15" font-weight="800">Terraform apply</text>
+          <text x="250" y="148" fill="#64748b" font-size="12">Step 2</text>
+          <path d="M 368 130 L 380 130" stroke="#0891b2" stroke-width="3" marker-end="url(#arrow)" opacity="0.72"/>
+        </g>
+        <g>
+          <rect x="388" y="96" width="158" height="72" rx="16" fill="#ffffff" stroke="#d8e2ee"/>
+          <circle cx="412" cy="132" r="12" fill="#0891b2" opacity="0.14"/>
+          <circle cx="412" cy="132" r="5" fill="#0891b2"/>
+          <text x="432" y="127" fill="#0f172a" font-size="15" font-weight="800">Deploy assets</text>
+          <text x="432" y="148" fill="#64748b" font-size="12">Step 3</text>
+          <path d="M 550 130 L 562 130" stroke="#0891b2" stroke-width="3" marker-end="url(#arrow)" opacity="0.72"/>
+        </g>
+        <g>
+          <rect x="570" y="96" width="158" height="72" rx="16" fill="#ffffff" stroke="#d8e2ee"/>
+          <circle cx="594" cy="132" r="12" fill="#0891b2" opacity="0.14"/>
+          <circle cx="594" cy="132" r="5" fill="#0891b2"/>
+          <text x="614" y="127" fill="#0f172a" font-size="15" font-weight="800">Run pipeline</text>
+          <text x="614" y="148" fill="#64748b" font-size="12">Step 4</text>
+          <path d="M 732 130 L 744 130" stroke="#0891b2" stroke-width="3" marker-end="url(#arrow)" opacity="0.72"/>
+        </g>
+        <g>
+          <rect x="752" y="96" width="158" height="72" rx="16" fill="#ffffff" stroke="#d8e2ee"/>
+          <circle cx="776" cy="132" r="12" fill="#0891b2" opacity="0.14"/>
+          <circle cx="776" cy="132" r="5" fill="#0891b2"/>
+          <text x="796" y="127" fill="#0f172a" font-size="15" font-weight="800">Test URLs</text>
+          <text x="796" y="148" fill="#64748b" font-size="12">Step 5</text>
+          <path d="M 914 130 L 926 130" stroke="#0891b2" stroke-width="3" marker-end="url(#arrow)" opacity="0.72"/>
+        </g>
+        <g>
+          <rect x="934" y="96" width="158" height="72" rx="16" fill="#ffffff" stroke="#d8e2ee"/>
+          <circle cx="958" cy="132" r="12" fill="#0891b2" opacity="0.14"/>
+          <circle cx="958" cy="132" r="5" fill="#0891b2"/>
+          <text x="978" y="127" fill="#0f172a" font-size="15" font-weight="800">Destroy</text>
+          <text x="978" y="148" fill="#64748b" font-size="12">Step 6</text>
+          
+        </g>
+    </svg>
+    </section>
+
+    <section class="grid" id="sections">
+      <article class="panel wide">
+        <div class="eyebrow">README compressed</div>
+        <h2>Read this page first, then use README.md for exact commands and edge cases.</h2>
+        <p>This HTML explainer keeps the same intent as the root README but converts the long-form markdown into a visual map, compact summaries, and a short workflow reference.</p>
+      </article>
+      
+      <article class="panel section-card">
+        <h3>How a session works</h3>
+        <p>A typical 2 to 3 hour session costs around $1.50 to $2.50 total. S3 (Simple Storage Service) buckets are preserved across sessions so Bronze, Silver, and Gold data accumulates over time without paying for idle compute. ---</p>
+      </article>
+      <article class="panel section-card">
+        <h3>Workflows</h3>
+        <p>session-start.yml Orchestrates a full session from scratch. It checks out each component repo using a GitHub PAT (Personal Access Token), runs the relevant deploy steps, and confirms the platform is ready before finishing. Job dependency graph: Inputs: Input T</p>
+      </article>
+      <article class="panel section-card">
+        <h3>Prerequisites</h3>
+        <p>These are one-time setup steps. Once done, the workflows run without any manual AWS CLI commands. 1. terraform-bootstrap applied in each account (dev, staging, prod). This creates the OIDC (OpenID Connect) provider, edp-{env}-github-actions-role , the Terrafor</p>
+      </article>
+      <article class="panel section-card">
+        <h3>Secrets and variables</h3>
+        <p>All secrets are scoped per GitHub Environment (Settings Environments {env}). Required secrets: Secret When required --- --- GH PAT Always — cross-repo checkout DB PASSWORD When run cdc simulator=true REDSHIFT ADMIN PASSWORD When serving layer=redshift-bi (and </p>
+      </article>
+      <article class="panel section-card">
+        <h3>Typical session sequence</h3>
+        <p>Step Functions session (fast, use this for most sessions): MWAA session (use when Airflow UI is needed): ---</p>
+      </article>
+      <article class="panel section-card">
+        <h3>Cost reference</h3>
+        <p>Item Cost --- --- Full dev/staging session (2-3 hr) ~$1.50-$2.50 DMS replication instance ~$0.10/hr RDS PostgreSQL ~$0.02/hr Per Analytics Agent question ~$0.016 (Claude API ~$0.015 + Athena ~$0.001) S3 storage between sessions Negligible at demo data volumes </p>
+      </article>
+      <article class="panel section-card">
+        <h3>Repository structure</h3>
+        <p>There is no application code in this repo. All logic is in the GitHub Actions workflow YAML files, which coordinate the other platform repos via cross-repo checkout.</p>
+      </article>
+    </section>
+
+    <section class="grid" id="commands">
+      <article class="panel">
+        <div class="eyebrow">Typical workflow</div>
+        <h2>Command path</h2>
+        <p>Representative commands surfaced from the README. Use the original README for complete setup and environment-specific values.</p>
+      </article>
+      <article class="panel wide">
+        <div class="command-list">
+          <code>---</code><code>**Job dependency graph:**</code><code>**Inputs:**</code><code>| Input | Type | Default | Description |</code><code>|---|---|---|---|</code><code>| `env` | choice | `dev` | Target environment: `dev`, `staging`, or `prod` |</code>
+        </div>
+      </article>
+    </section>
+
+    <p class="footer">Generated from README.md. Existing markdown remains the source of truth.</p>
+  </main>
+</body>
+</html>
