@@ -86,6 +86,25 @@ jobs:
           cd environments/${{ env.ENV }}
           terraform init
 
+      - name: Disable RDS deletion protection (pre-destroy safety)
+        run: |
+          DB_ID="edp-${{ env.ENV }}-source-db"
+          PROTECTION=$(aws rds describe-db-instances \
+            --db-instance-identifier "$DB_ID" \
+            --query 'DBInstances[0].DeletionProtection' \
+            --output text 2>/dev/null || echo "FALSE")
+          if [ "$PROTECTION" = "True" ]; then
+            echo "Deletion protection is ON for $DB_ID — disabling before destroy..."
+            aws rds modify-db-instance \
+              --db-instance-identifier "$DB_ID" \
+              --no-deletion-protection \
+              --apply-immediately
+            echo "Waiting 15 s for modification to apply..."
+            sleep 15
+          else
+            echo "Deletion protection already off or instance does not exist — no action needed."
+          fi
+
       - name: Terraform destroy (preserves S3 data buckets)
         run: make destroy-safe ${{ env.ENV }}
 
