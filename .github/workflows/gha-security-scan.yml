@@ -1,0 +1,95 @@
+name: GHA Secret Exposure Scan
+
+# Scans all workflow files in this repo for patterns that expose secrets:
+#   - workflow_dispatch inputs with credential names and type: string
+#   - inputs.* used in credential env vars
+#   - raw file dumps to GITHUB_STEP_SUMMARY (Terraform plan leak vector)
+#   - toJSON(secrets)
+# Blocks merge if any pattern is found.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  scan:
+    name: Scan workflow files for secret exposure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for secret exposure patterns
+        run: |
+          python3 - .github/workflows << 'PYEOF'
+          import glob, re, sys
+
+          CRED_NAMES = re.compile(
+              r'\b(password|passwd|pwd|secret|token|api_key|private_key|credential)\b',
+              re.IGNORECASE,
+          )
+
+          def scan(workflow_dir):
+              files = sorted(
+                  glob.glob(f'{workflow_dir}/*.yml') + glob.glob(f'{workflow_dir}/*.yaml')
+              )
+              if not files:
+                  print(f'No workflow files found in {workflow_dir}')
+                  return True
+
+              failed = False
+
+              for path in files:
+                  with open(path) as fh:
+                      lines = fh.readlines()
+
+                  for i, line in enumerate(lines):
+                      lineno = i + 1
+                      if re.match(r'^\s*#', line):
+                          continue
+
+                      m = re.match(r'^\s{4,}(\w+):\s*$', line)
+                      if m and CRED_NAMES.search(m.group(1)):
+                          for j, wl in enumerate(lines[i: i + 10]):
+                              if re.search(r'type:\s*string', wl):
+                                  print(
+                                      f'FAIL [{path}:{lineno + j}] '
+                                      f'Input "{m.group(1)}" is type:string — '
+                                      f'visible in run history as plaintext. '
+                                      f'Remove this input and use a GitHub secret instead.'
+                                  )
+                                  failed = True
+                                  break
+
+                      if re.search(r'\$\{\{\s*inputs\.', line) and re.search(
+                          r'(?i)(TF_VAR_|password|secret|token|api.?key|credential)', line
+                      ):
+                          print(
+                              f'FAIL [{path}:{lineno}] '
+                              f'inputs.* used in a credential env var: {line.strip()}'
+                          )
+                          failed = True
+
+                      if re.search(r'\bcat\b.+>>', line) and 'GITHUB_STEP_SUMMARY' in line:
+                          print(
+                              f'FAIL [{path}:{lineno}] '
+                              f'Raw file dumped to GITHUB_STEP_SUMMARY '
+                              f'(Terraform plan may leak values): {line.strip()}'
+                          )
+                          failed = True
+
+                      if re.search(r'\$\{\{.*toJSON\s*\(\s*secrets\s*\)', line, re.IGNORECASE):
+                          print(
+                              f'FAIL [{path}:{lineno}] '
+                              f'toJSON(secrets) exposes all secret values: {line.strip()}'
+                          )
+                          failed = True
+
+              if failed:
+                  print('\nSCAN FAILED — fix the issues above before merging.')
+                  return False
+
+              print(f'SCAN PASSED — {len(files)} workflow file(s) checked.')
+              return True
+
+          sys.exit(0 if scan(sys.argv[1]) else 1)
+          PYEOF

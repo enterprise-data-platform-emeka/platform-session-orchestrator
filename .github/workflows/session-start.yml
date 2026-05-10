@@ -62,14 +62,6 @@ on:
         default: athena-only
         type: choice
         options: [athena-only, redshift-bi]
-      db_password:
-        description: "RDS master password. Prefer environment secret DB_PASSWORD; this input is a manual fallback."
-        required: false
-        type: string
-      redshift_admin_password:
-        description: "Redshift admin password. Prefer environment secret REDSHIFT_ADMIN_PASSWORD; this input is a manual fallback."
-        required: false
-        type: string
       run_cdc_simulator:
         description: "Create dev CDC infrastructure, seed RDS, start DMS, and run live injection."
         required: true
@@ -155,8 +147,8 @@ jobs:
 
       - name: Terraform apply
         env:
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD || inputs.db_password }}
-          REDSHIFT_ADMIN_PASSWORD: ${{ secrets.REDSHIFT_ADMIN_PASSWORD || inputs.redshift_admin_password }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          REDSHIFT_ADMIN_PASSWORD: ${{ secrets.REDSHIFT_ADMIN_PASSWORD }}
         run: |
           cd environments/${{ env.ENV }}
           if [ "${{ inputs.run_cdc_simulator }}" = "true" ]; then

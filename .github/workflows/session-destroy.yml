@@ -20,6 +20,10 @@ name: Session Destroy
 #   Same as Session Start — OIDC role and GitHub Environments must exist.
 #   GH_PAT secret required to check out terraform-platform-infra-live.
 #
+# Required secrets (Settings -> Environments -> {env} -> Secrets):
+#   DB_PASSWORD             — RDS master password
+#   REDSHIFT_ADMIN_PASSWORD — Redshift admin password
+#
 # Cost reminder: a typical 2-3 hour session costs ~$1.50-$2.50 total.
 
 on:
@@ -31,14 +35,6 @@ on:
         default: dev
         type: choice
         options: [dev, staging, prod]
-      db_password:
-        description: "RDS master password (needed for Terraform variable validation)"
-        required: true
-        type: string
-      redshift_admin_password:
-        description: "Redshift admin password (needed for Terraform variable validation)"
-        required: true
-        type: string
       confirm:
         description: "Type 'destroy' to confirm teardown"
         required: true
@@ -60,8 +56,8 @@ jobs:
     env:
       ENV:                           ${{ inputs.env }}
       AWS_REGION:                    eu-central-1
-      TF_VAR_db_password:            ${{ inputs.db_password }}
-      TF_VAR_redshift_admin_password: ${{ inputs.redshift_admin_password }}
+      TF_VAR_db_password:            ${{ secrets.DB_PASSWORD }}
+      TF_VAR_redshift_admin_password: ${{ secrets.REDSHIFT_ADMIN_PASSWORD }}
 
     steps:
       - name: Checkout terraform-platform-infra-live
