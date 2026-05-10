@@ -61,7 +61,7 @@ jobs:
                                   break
 
                       if re.search(r'\$\{\{\s*inputs\.', line) and re.search(
-                          r'(?i)(TF_VAR_|password|secret|token|api.?key|credential)', line
+                          r'(?i)(password|passwd|pwd|secret|token|api.?key|credential)', line
                       ):
                           print(
                               f'FAIL [{path}:{lineno}] '
