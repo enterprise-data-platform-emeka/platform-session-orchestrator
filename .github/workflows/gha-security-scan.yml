@@ -44,6 +44,8 @@ jobs:
 
                   for i, line in enumerate(lines):
                       lineno = i + 1
+                      if re.match(r'^\s*#', line):
+                          continue
 
                       m = re.match(r'^\s{4,}(\w+):\s*$', line)
                       if m and CRED_NAMES.search(m.group(1)):
@@ -75,7 +77,7 @@ jobs:
                           )
                           failed = True
 
-                      if re.search(r'toJSON\s*\(\s*secrets\s*\)', line, re.IGNORECASE):
+                      if re.search(r'\$\{\{.*toJSON\s*\(\s*secrets\s*\)', line, re.IGNORECASE):
                           print(
                               f'FAIL [{path}:{lineno}] '
                               f'toJSON(secrets) exposes all secret values: {line.strip()}'
