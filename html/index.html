@@ -3,26 +3,32 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>platform-session-orchestrator — HTML README</title>
+  <title>platform-session-orchestrator — Visual README</title>
   <style>
     :root {
-      --accent: #16a34a;
-      --page: #f8fafc;
-      --surface: #ffffff;
-      --soft: #eef4fb;
+      --accent: #2563eb;
+      --teal: #0f766e;
+      --violet: #7c3aed;
       --ink: #0f172a;
       --muted: #526175;
-      --line: #d8e2ee;
-      --shadow: 0 20px 55px rgba(15, 23, 42, 0.09);
+      --page: #f5f8fb;
+      --surface: rgba(255,255,255,0.9);
+      --soft: #eef4fa;
+      --line: #d6e0ec;
+      --shadow: 0 22px 70px rgba(15,23,42,0.11);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       background:
-        radial-gradient(circle at 16% 0%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 30rem),
-        linear-gradient(180deg, #fff 0, var(--page) 38rem);
+        linear-gradient(rgba(37,99,235,0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(37,99,235,0.035) 1px, transparent 1px),
+        radial-gradient(circle at 8% 0%, rgba(37,99,235,0.16), transparent 34rem),
+        radial-gradient(circle at 92% 8%, rgba(15,118,110,0.13), transparent 32rem),
+        var(--page);
+      background-size: 44px 44px, 44px 44px, auto, auto, auto;
     }
     a { color: var(--accent); text-decoration: none; }
     .topbar {
@@ -30,58 +36,75 @@
       top: 0;
       z-index: 10;
       display: flex;
+      align-items: center;
       justify-content: space-between;
       gap: 1rem;
-      align-items: center;
-      padding: 0.9rem 1.2rem;
+      padding: 0.85rem 1.4rem;
       border-bottom: 1px solid var(--line);
-      background: rgba(255,255,255,0.92);
-      backdrop-filter: blur(14px);
+      background: rgba(255,255,255,0.88);
+      backdrop-filter: blur(18px);
     }
     .brand { display: flex; align-items: center; gap: 0.75rem; font-weight: 950; }
-    .mark { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; background: var(--accent); color: #fff; box-shadow: 0 12px 26px color-mix(in srgb, var(--accent) 30%, transparent); font-size: 0.78rem; }
-    .nav { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-    .nav a { border: 1px solid var(--line); border-radius: 999px; padding: 0.5rem 0.72rem; color: var(--muted); background: #fff; font-size: 0.84rem; font-weight: 800; }
-    .wrap { width: min(1180px, calc(100vw - 2rem)); margin: 0 auto; padding: 1rem 0 4rem; }
-    .hero { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.6fr); gap: 1rem; margin: 1rem 0; }
-    .panel, .hero-card, .card { border: 1px solid var(--line); border-radius: 20px; background: rgba(255,255,255,0.94); box-shadow: var(--shadow); }
-    .hero-card { padding: 2rem; }
+    .mark { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; background: linear-gradient(135deg, var(--accent), var(--teal)); color: #fff; box-shadow: 0 14px 28px rgba(37,99,235,0.25); font-size: 0.78rem; }
+    .nav { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .nav a { padding: 0.52rem 0.78rem; border: 1px solid var(--line); border-radius: 999px; background: rgba(255,255,255,0.82); color: var(--muted); font-weight: 850; font-size: 0.86rem; }
+    .wrap { width: min(1240px, calc(100vw - 2rem)); margin: 0 auto; padding: 1.2rem 0 4rem; }
+    .hero { display: grid; grid-template-columns: minmax(0,1.35fr) minmax(280px,0.65fr); gap: 1rem; margin: 1rem 0; }
+    .hero-card, .panel, .diagram-card, .concept-card, .section-tile {
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+    .hero-card { padding: 2.1rem; background: linear-gradient(135deg, rgba(37,99,235,0.08), rgba(15,118,110,0.06) 45%, rgba(255,255,255,0.96)); }
     .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.72rem; font-weight: 950; }
-    h1 { margin: 0.45rem 0 0.75rem; font-size: clamp(2.2rem, 5vw, 4.6rem); line-height: 0.95; letter-spacing: -0.05em; }
-    h2 { margin: 0.35rem 0 0.6rem; font-size: clamp(1.4rem, 3vw, 2.1rem); letter-spacing: -0.03em; }
-    h3 { margin: 0; font-size: 1rem; }
+    h1 { margin: 0.45rem 0 0.75rem; font-size: clamp(2.2rem,5vw,4.5rem); line-height: 0.95; letter-spacing: -0.045em; }
+    h2 { margin: 0.35rem 0 0.7rem; font-size: clamp(1.35rem,3vw,2.1rem); letter-spacing: -0.035em; }
+    h3 { margin: 0; font-size: 1.02rem; }
     p { color: var(--muted); line-height: 1.58; }
-    .tags { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem; }
-    .tags span { padding: 0.44rem 0.65rem; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line)); background: color-mix(in srgb, var(--accent) 7%, #fff); color: #1f2937; font-weight: 800; font-size: 0.82rem; }
-    .stats { display: grid; gap: 0.7rem; padding: 1rem; }
-    .stat { padding: 0.95rem; border: 1px solid var(--line); border-radius: 14px; background: var(--soft); }
-    .stat span { display: block; color: var(--muted); font-size: 0.76rem; font-weight: 800; }
-    .stat strong { display: block; margin-top: 0.24rem; font-size: 1.55rem; color: var(--ink); }
-    .diagram { margin: 1rem 0; border: 1px solid var(--line); border-radius: 24px; background: #fff; box-shadow: var(--shadow); overflow-x: auto; }
-    .diagram svg { display: block; min-width: 920px; width: 100%; height: auto; }
+    .tags { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem; }
+    .tags span { padding: 0.45rem 0.68rem; border-radius: 999px; border: 1px solid rgba(37,99,235,0.22); background: rgba(37,99,235,0.07); font-size: 0.83rem; font-weight: 850; color: #1f2937; }
+    .stats { display: grid; gap: 0.75rem; padding: 1rem; }
+    .metric { padding: 0.95rem; border: 1px solid var(--line); border-radius: 16px; background: var(--soft); }
+    .metric span { display: block; color: var(--muted); font-size: 0.76rem; font-weight: 850; }
+    .metric strong { display: block; margin-top: 0.25rem; font-size: 1.55rem; }
+    .diagram-card { margin: 1rem 0; overflow-x: auto; background: #fff; }
+    .diagram-card header { padding: 1.1rem 1.2rem 0; }
+    .diagram-card svg { display: block; min-width: 980px; width: 100%; height: auto; }
+    .diagram-heading { fill: var(--ink); font-size: 24px; font-weight: 950; }
+    .diagram-subtitle { fill: var(--muted); font-size: 14px; }
+    .arch-node, .flow-node, .actor-box { fill: #fff; stroke: #bfdbfe; stroke-width: 1.5; }
+    .arch-node.active { stroke: var(--accent); stroke-width: 3; filter: drop-shadow(0 8px 18px rgba(37,99,235,0.24)); }
+    .node-title, .actor-label { fill: var(--ink); font-size: 13px; font-weight: 900; }
+    .node-sub { fill: var(--muted); font-size: 11px; font-weight: 750; }
+    .layer-label { fill: #334155; font-size: 12px; font-weight: 900; }
+    .swimlane { stroke: #bfdbfe; stroke-width: 2; }
     .flow-arrow .hit { stroke: transparent; stroke-width: 18; fill: none; pointer-events: stroke; }
-    .flow-arrow .line { fill: none; stroke: #334155; stroke-width: 2.4; marker-end: url(#arrow-dark); transition: stroke 0.18s ease, stroke-width 0.18s ease, filter 0.18s ease; }
-    .flow-arrow.return .line { stroke: #64748b; stroke-dasharray: 6 6; marker-end: url(#arrow-dark); }
+    .flow-arrow .line { fill: none; stroke: #334155; stroke-width: 2.4; marker-end: url(#arrow-dark); transition: stroke .18s ease, stroke-width .18s ease, filter .18s ease; }
     .flow-arrow.accent .line { stroke: var(--accent); marker-end: url(#arrow-accent); }
-    .flow-arrow:hover .line { stroke: var(--accent); stroke-width: 4; stroke-dasharray: 12 8; animation: flowDash 0.8s linear infinite; filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent) 75%, transparent)); marker-end: url(#arrow-accent); }
-    .flow-arrow text { fill: #0f172a; font-size: 12px; font-weight: 760; pointer-events: none; }
+    .flow-arrow.return .line { stroke: #64748b; stroke-dasharray: 6 6; }
+    .flow-arrow:hover .line { stroke: var(--accent); stroke-width: 4; stroke-dasharray: 12 8; animation: flowDash .8s linear infinite; filter: drop-shadow(0 0 8px rgba(37,99,235,.62)); marker-end: url(#arrow-accent); }
+    .flow-arrow text { fill: var(--ink); font-size: 12px; font-weight: 820; pointer-events: none; }
     .flow-arrow:hover text { fill: var(--accent); font-weight: 950; }
     @keyframes flowDash { to { stroke-dashoffset: -40; } }
-    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 1rem; }
-    .card { padding: 1.05rem; min-height: 156px; border-top: 4px solid var(--accent); }
-    .card p { margin-bottom: 0; }
-    .story { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 1rem; margin-top: 1rem; }
-    .panel { padding: 1.15rem; }
-    .story ul { margin: 0.8rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.65rem; }
-    .story li { padding: 0.8rem; border-radius: 14px; background: var(--soft); border: 1px solid var(--line); color: var(--muted); line-height: 1.45; }
-    .cta { display: flex; flex-wrap: wrap; gap: 0.65rem; margin-top: 1rem; }
-    .button { display: inline-flex; align-items: center; justify-content: center; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line)); border-radius: 999px; padding: 0.62rem 0.85rem; background: #fff; font-weight: 900; }
-    .primary { background: var(--accent); color: #fff; box-shadow: 0 12px 24px color-mix(in srgb, var(--accent) 28%, transparent); }
-    .footer { text-align: center; color: var(--muted); font-size: 0.88rem; margin-top: 1.4rem; }
+    .explain { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: .75rem; padding: 0 1.2rem 1.2rem; }
+    .explain div, .concept-card { padding: .95rem; border: 1px solid var(--line); border-radius: 18px; background: rgba(255,255,255,.86); box-shadow: none; }
+    .explain strong, .concept-card h3 { display: block; margin-bottom: .28rem; }
+    .explain span, .concept-card p { color: var(--muted); font-size: .9rem; line-height: 1.45; }
+    .concept-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 1rem; margin: 1rem 0; }
+    .mini-flow { display: flex; gap: .45rem; align-items: center; flex-wrap: wrap; margin: .85rem 0; }
+    .mini-node { padding: .42rem .58rem; border: 1px solid var(--line); border-radius: 12px; background: #fff; font-size: .78rem; font-weight: 850; }
+    .mini-arrow { color: var(--accent); font-weight: 950; }
+    .sections { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: .85rem; margin-top: 1rem; }
+    .section-tile { padding: .95rem; box-shadow: none; display: flex; gap: .75rem; align-items: center; }
+    .section-tile span { color: var(--accent); font-size: .82rem; font-weight: 950; }
+    .section-tile strong { line-height: 1.3; }
+    .footer { color: var(--muted); text-align: center; font-size: .9rem; margin-top: 1.4rem; }
     @media (max-width: 900px) {
       .topbar { flex-direction: column; align-items: flex-start; }
-      .hero, .grid, .story { grid-template-columns: 1fr; }
-      .diagram svg { min-width: 820px; }
+      .hero, .concept-grid, .sections, .explain { grid-template-columns: 1fr; }
+      .diagram-card svg { min-width: 920px; }
     }
   </style>
 </head>
@@ -89,132 +112,166 @@
   <header class="topbar">
     <div class="brand"><div class="mark">EDP</div><span>platform-session-orchestrator</span></div>
     <nav class="nav">
-      <a href="https://enterprise-data-platform-emeka.github.io/platform-session-orchestrator/html/?v=latest">HTML README</a>
-      <a href="../README.md">Markdown README</a>
-      <a href="#flow">Flow</a>
-      <a href="#sections">Sections</a>
+      <a href="https://github.com/enterprise-data-platform-emeka/platform-session-orchestrator/blob/main/README.md">README.md</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#repo-flow">Repo Flow</a>
+      <a href="#concepts">Concepts</a>
     </nav>
   </header>
   <main class="wrap">
     <section class="hero">
       <div class="hero-card">
-        <div class="eyebrow">Enterprise Data Platform repository</div>
+        <div class="eyebrow">Visual README</div>
         <h1>platform-session-orchestrator</h1>
-        <p>GitHub Actions lifecycle controller for start and destroy sessions.</p>
-        <div class="tags"><span>Session start</span><span>Session destroy</span><span>Cost control</span><span>CI orchestration</span></div>
+        <p>GitHub Actions controller that starts and destroys full platform sessions to keep AWS cost under control.</p>
+        <div class="tags"><span>GitHub Actions</span><span>Session start</span><span>Session destroy</span><span>Cost control</span><span>Cross-repo orchestration</span></div>
       </div>
-      <aside class="panel stats" aria-label="README stats">
-        <div class="stat"><span>README lines</span><strong>261</strong></div>
-        <div class="stat"><span>Major sections</span><strong>7</strong></div>
-        <div class="stat"><span>Code fences</span><strong>8</strong></div>
-        <div class="stat"><span>Table rows</span><strong>31</strong></div>
+      <aside class="panel stats">
+        <div class="metric"><span>README lines</span><strong>261</strong></div>
+        <div class="metric"><span>Major sections</span><strong>7</strong></div>
+        <div class="metric"><span>Code examples</span><strong>8</strong></div>
+        <div class="metric"><span>Table rows</span><strong>31</strong></div>
       </aside>
     </section>
 
-    <section class="diagram" id="flow">
-      <svg viewBox="0 0 1120 250" role="img" aria-label="Repository role flow diagram">
-<defs>
-<marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#16a34a"/></marker>
-<marker id="arrow-dark" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
-<marker id="arrow-accent" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#16a34a"/></marker>
-<linearGradient id="heroFlow" x1="0" x2="1"><stop stop-color="#16a34a" stop-opacity="0.12"/><stop offset="1" stop-color="#ffffff"/></linearGradient>
-</defs>
-<rect x="0" y="0" width="1120" height="250" rx="28" fill="url(#heroFlow)"/>
-<text x="32" y="45" fill="#0f172a" font-size="22" font-weight="900">Repository role in the platform</text>
-<text x="32" y="72" fill="#64748b" font-size="14">Hover arrows on the diagrams below to follow runtime flow.</text>
-<rect x="32.0" y="112" width="157.7" height="70" rx="16" fill="#fff" stroke="#dbe5f2"/>
-<circle cx="56.0" cy="147" r="12" fill="#16a34a" opacity="0.14"/>
-<circle cx="56.0" cy="147" r="5" fill="#16a34a"/>
-<text x="76.0" y="144" fill="#0f172a" font-size="13" font-weight="850">Start workflow</text>
-<text x="76.0" y="162" fill="#64748b" font-size="11">Step 1</text>
-<g class="flow-arrow"><path class="hit" d="M193.7 147 H205.7"/><path class="line" d="M193.7 147 H205.7"/></g>
-<rect x="211.7" y="112" width="157.7" height="70" rx="16" fill="#fff" stroke="#dbe5f2"/>
-<circle cx="235.7" cy="147" r="12" fill="#16a34a" opacity="0.14"/>
-<circle cx="235.7" cy="147" r="5" fill="#16a34a"/>
-<text x="255.7" y="144" fill="#0f172a" font-size="13" font-weight="850">Terraform apply</text>
-<text x="255.7" y="162" fill="#64748b" font-size="11">Step 2</text>
-<g class="flow-arrow"><path class="hit" d="M373.3 147 H385.3"/><path class="line" d="M373.3 147 H385.3"/></g>
-<rect x="391.3" y="112" width="157.7" height="70" rx="16" fill="#fff" stroke="#dbe5f2"/>
-<circle cx="415.3" cy="147" r="12" fill="#16a34a" opacity="0.14"/>
-<circle cx="415.3" cy="147" r="5" fill="#16a34a"/>
-<text x="435.3" y="144" fill="#0f172a" font-size="13" font-weight="850">Run pipeline</text>
-<text x="435.3" y="162" fill="#64748b" font-size="11">Step 3</text>
-<g class="flow-arrow"><path class="hit" d="M553.0 147 H565.0"/><path class="line" d="M553.0 147 H565.0"/></g>
-<rect x="571.0" y="112" width="157.7" height="70" rx="16" fill="#fff" stroke="#dbe5f2"/>
-<circle cx="595.0" cy="147" r="12" fill="#16a34a" opacity="0.14"/>
-<circle cx="595.0" cy="147" r="5" fill="#16a34a"/>
-<text x="615.0" y="144" fill="#0f172a" font-size="13" font-weight="850">Use platform</text>
-<text x="615.0" y="162" fill="#64748b" font-size="11">Step 4</text>
-<g class="flow-arrow"><path class="hit" d="M732.7 147 H744.7"/><path class="line" d="M732.7 147 H744.7"/></g>
-<rect x="750.7" y="112" width="157.7" height="70" rx="16" fill="#fff" stroke="#dbe5f2"/>
-<circle cx="774.7" cy="147" r="12" fill="#16a34a" opacity="0.14"/>
-<circle cx="774.7" cy="147" r="5" fill="#16a34a"/>
-<text x="794.7" y="144" fill="#0f172a" font-size="13" font-weight="850">Destroy workflow</text>
-<text x="794.7" y="162" fill="#64748b" font-size="11">Step 5</text>
-<g class="flow-arrow"><path class="hit" d="M912.3 147 H924.3"/><path class="line" d="M912.3 147 H924.3"/></g>
-<rect x="930.3" y="112" width="157.7" height="70" rx="16" fill="#fff" stroke="#dbe5f2"/>
-<circle cx="954.3" cy="147" r="12" fill="#16a34a" opacity="0.14"/>
-<circle cx="954.3" cy="147" r="5" fill="#16a34a"/>
-<text x="974.3" y="144" fill="#0f172a" font-size="13" font-weight="850">Compute off</text>
-<text x="974.3" y="162" fill="#64748b" font-size="11">Step 6</text>
-</svg>
+    <section class="diagram-card" id="architecture">
+      <header>
+        <div class="eyebrow">End-to-end architecture</div>
+        <h2>Where this repo sits in the full platform</h2>
+      </header>
+      
+      <svg viewBox="0 0 1230 500" role="img" aria-label="End-to-end Enterprise Data Platform architecture">
+        <defs>
+          <marker id="arrow-dark" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+          <marker id="arrow-accent" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#2563eb"/></marker>
+        </defs>
+        <rect x="0" y="0" width="1230" height="500" rx="28" fill="#f8fbff"/>
+        <text x="40" y="44" class="diagram-heading">Complete platform path</text>
+        <text x="40" y="70" class="diagram-subtitle">Source changes become trusted Gold marts, then three stakeholder frontends use the same governed analytics backend.</text>
+        <g><rect class="arch-node" x="55" y="84" width="130" height="68" rx="16"/><text x="120" y="114" text-anchor="middle" class="node-title">PostgreSQL</text><text x="120" y="134" text-anchor="middle" class="node-sub">Source OLTP</text></g><g><rect class="arch-node" x="220" y="84" width="130" height="68" rx="16"/><text x="285" y="114" text-anchor="middle" class="node-title">DMS CDC</text><text x="285" y="134" text-anchor="middle" class="node-sub">Change capture</text></g><g><rect class="arch-node" x="385" y="84" width="130" height="68" rx="16"/><text x="450" y="114" text-anchor="middle" class="node-title">Bronze S3</text><text x="450" y="134" text-anchor="middle" class="node-sub">Raw events</text></g><g><rect class="arch-node" x="550" y="84" width="130" height="68" rx="16"/><text x="615" y="114" text-anchor="middle" class="node-title">Glue PySpark</text><text x="615" y="134" text-anchor="middle" class="node-sub">Clean + reconcile</text></g><g><rect class="arch-node" x="715" y="84" width="130" height="68" rx="16"/><text x="780" y="114" text-anchor="middle" class="node-title">Silver S3</text><text x="780" y="134" text-anchor="middle" class="node-sub">Star schema</text></g><g><rect class="arch-node" x="880" y="84" width="130" height="68" rx="16"/><text x="945" y="114" text-anchor="middle" class="node-title">dbt / Athena</text><text x="945" y="134" text-anchor="middle" class="node-sub">Gold models</text></g><g><rect class="arch-node" x="1045" y="84" width="130" height="68" rx="16"/><text x="1110" y="114" text-anchor="middle" class="node-title">Gold S3</text><text x="1110" y="134" text-anchor="middle" class="node-sub">Business marts</text></g><g><rect class="arch-node" x="545" y="260" width="130" height="68" rx="16"/><text x="610" y="290" text-anchor="middle" class="node-title">FastAPI Agent</text><text x="610" y="310" text-anchor="middle" class="node-sub">SQL + guardrails</text></g><g><rect class="arch-node" x="280" y="390" width="130" height="68" rx="16"/><text x="345" y="420" text-anchor="middle" class="node-title">Streamlit UI</text><text x="345" y="440" text-anchor="middle" class="node-sub">Current UI</text></g><g><rect class="arch-node" x="545" y="390" width="130" height="68" rx="16"/><text x="610" y="420" text-anchor="middle" class="node-title">HTML Dashboard</text><text x="610" y="440" text-anchor="middle" class="node-sub">Custom UI</text></g><g><rect class="arch-node" x="810" y="390" width="130" height="68" rx="16"/><text x="875" y="420" text-anchor="middle" class="node-title">Slack MCP</text><text x="875" y="440" text-anchor="middle" class="node-sub">Chat entry</text></g>
+        <g class="flow-arrow"><path class="hit" d="M185 118 L220 118"/><path class="line" d="M185 118 L220 118"/></g><g class="flow-arrow"><path class="hit" d="M350 118 L385 118"/><path class="line" d="M350 118 L385 118"/></g><g class="flow-arrow"><path class="hit" d="M515 118 L550 118"/><path class="line" d="M515 118 L550 118"/></g><g class="flow-arrow"><path class="hit" d="M680 118 L715 118"/><path class="line" d="M680 118 L715 118"/></g><g class="flow-arrow"><path class="hit" d="M845 118 L880 118"/><path class="line" d="M845 118 L880 118"/></g><g class="flow-arrow"><path class="hit" d="M1010 118 L1045 118"/><path class="line" d="M1010 118 L1045 118"/></g><g class="flow-arrow"><path class="hit" d="M1110 152 L610 260"/><path class="line" d="M1110 152 L610 260"/></g><g class="flow-arrow"><path class="hit" d="M545 328 L345 390"/><path class="line" d="M545 328 L345 390"/></g><g class="flow-arrow"><path class="hit" d="M610 328 L610 390"/><path class="line" d="M610 328 L610 390"/></g><g class="flow-arrow"><path class="hit" d="M675 328 L875 390"/><path class="line" d="M675 328 L875 390"/></g><g class="flow-arrow"><path class="hit" d="M345 390 L545 328"/><path class="line" d="M345 390 L545 328"/></g><g class="flow-arrow"><path class="hit" d="M610 390 L610 328"/><path class="line" d="M610 390 L610 328"/></g><g class="flow-arrow"><path class="hit" d="M875 390 L675 328"/><path class="line" d="M875 390 L675 328"/></g>
+        <rect x="498" y="224" width="228" height="132" rx="24" fill="rgba(37,99,235,0.06)" stroke="#bfdbfe"/>
+        <text x="612" y="242" text-anchor="middle" class="layer-label">Analytics serving layer</text>
+        <rect x="238" y="362" width="780" height="92" rx="24" fill="rgba(15,118,110,0.05)" stroke="#ccfbf1"/>
+        <text x="628" y="478" text-anchor="middle" class="layer-label">Frontends: Streamlit, custom HTML, and Slack all converge on FastAPI</text>
+      </svg>
+    
+      <div class="explain">
+        <div><strong>Data pipeline</strong><span>PostgreSQL changes are captured by DMS, stored in Bronze, cleaned by Glue, modeled by dbt, and exposed as Gold marts.</span></div>
+        <div><strong>Serving layer</strong><span>The analytics agent queries Gold data through Athena and returns governed answers with SQL, cost, and audit evidence.</span></div>
+        <div><strong>Frontends</strong><span>Streamlit, custom HTML, and Slack/MCP are separate user entry points that share the same backend contract.</span></div>
+      </div>
     </section>
 
-    <section class="diagram">
-      <svg viewBox="0 0 1120 560" role="img" aria-label="Runtime interaction diagram">
-<defs>
-<marker id="arrow-dark" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
-<marker id="arrow-accent" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#16a34a"/></marker>
-</defs>
-<rect x="0" y="0" width="1120" height="560" rx="24" fill="#fbfdff"/>
-<line x1="72.0" y1="86" x2="72.0" y2="500" stroke="#bfdbfe" stroke-width="2"/>
-<rect x="10.0" y="36" width="124" height="40" rx="10" fill="#fff" stroke="#c7ddff"/>
-<text x="72.0" y="61" text-anchor="middle" fill="#0f172a" font-size="12" font-weight="900">GitHub Actions</text>
-<line x1="316.0" y1="86" x2="316.0" y2="500" stroke="#bfdbfe" stroke-width="2"/>
-<rect x="254.0" y="36" width="124" height="40" rx="10" fill="#fff" stroke="#c7ddff"/>
-<text x="316.0" y="61" text-anchor="middle" fill="#0f172a" font-size="12" font-weight="900">Terraform</text>
-<line x1="560.0" y1="86" x2="560.0" y2="500" stroke="#bfdbfe" stroke-width="2"/>
-<rect x="498.0" y="36" width="124" height="40" rx="10" fill="#fff" stroke="#c7ddff"/>
-<text x="560.0" y="61" text-anchor="middle" fill="#0f172a" font-size="12" font-weight="900">Data pipeline</text>
-<line x1="804.0" y1="86" x2="804.0" y2="500" stroke="#bfdbfe" stroke-width="2"/>
-<rect x="742.0" y="36" width="124" height="40" rx="10" fill="#fff" stroke="#c7ddff"/>
-<text x="804.0" y="61" text-anchor="middle" fill="#0f172a" font-size="12" font-weight="900">Apps</text>
-<line x1="1048.0" y1="86" x2="1048.0" y2="500" stroke="#bfdbfe" stroke-width="2"/>
-<rect x="986.0" y="36" width="124" height="40" rx="10" fill="#fff" stroke="#c7ddff"/>
-<text x="1048.0" y="61" text-anchor="middle" fill="#0f172a" font-size="12" font-weight="900">Teardown</text>
-<g class="flow-arrow accent"><path class="hit" d="M72.0 128 H316.0"/><path class="line" d="M72.0 128 H316.0"/><text x="194.0" y="118" text-anchor="middle">1. Request / trigger</text></g>
-<g class="flow-arrow accent"><path class="hit" d="M316.0 178 H560.0"/><path class="line" d="M316.0 178 H560.0"/><text x="438.0" y="168" text-anchor="middle">2. Route work</text></g>
-<g class="flow-arrow accent"><path class="hit" d="M560.0 236 H804.0"/><path class="line" d="M560.0 236 H804.0"/><text x="682.0" y="226" text-anchor="middle">3. Generate or transform</text></g>
-<g class="flow-arrow accent"><path class="hit" d="M804.0 294 H1048.0"/><path class="line" d="M804.0 294 H1048.0"/><text x="926.0" y="284" text-anchor="middle">4. Read/write governed data</text></g>
-<g class="flow-arrow return"><path class="hit" d="M1048.0 350 H560.0"/><path class="line" d="M1048.0 350 H560.0"/><text x="804.0" y="340" text-anchor="middle">5. Return evidence</text></g>
-<g class="flow-arrow return"><path class="hit" d="M560.0 404 H316.0"/><path class="line" d="M560.0 404 H316.0"/><text x="438.0" y="394" text-anchor="middle">6. Package response</text></g>
-<g class="flow-arrow return"><path class="hit" d="M316.0 458 H72.0"/><path class="line" d="M316.0 458 H72.0"/><text x="194.0" y="448" text-anchor="middle">7. Stakeholder output</text></g>
-</svg>
+    <section class="diagram-card" id="repo-flow">
+      <header>
+        <div class="eyebrow">Repository focus</div>
+        <h2>Start and destroy lifecycle</h2>
+      </header>
+      
+      <svg viewBox="0 0 1230 250" role="img" aria-label="Start and destroy lifecycle repository flow">
+        <defs>
+          <marker id="arrow-dark" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+          <marker id="arrow-accent" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#2563eb"/></marker>
+        </defs>
+        <rect x="0" y="0" width="1230" height="250" rx="28" fill="#ffffff"/>
+        <text x="40" y="46" class="diagram-heading">Start and destroy lifecycle</text>
+        <text x="40" y="72" class="diagram-subtitle">The main responsibility of this repository as a left-to-right flow.</text>
+        <g><rect class="flow-node" x="42.0" y="118" width="144.9" height="76" rx="18"/><text x="114.4" y="152" text-anchor="middle" class="node-title">Start workflow</text><text x="114.4" y="172" text-anchor="middle" class="node-sub">Step 1</text></g><g class="flow-arrow"><path class="hit" d="M190.9 156 H204.9"/><path class="line" d="M190.9 156 H204.9"/></g><g><rect class="flow-node" x="208.9" y="118" width="144.9" height="76" rx="18"/><text x="281.3" y="152" text-anchor="middle" class="node-title">Apply infra</text><text x="281.3" y="172" text-anchor="middle" class="node-sub">Step 2</text></g><g class="flow-arrow"><path class="hit" d="M357.7 156 H371.7"/><path class="line" d="M357.7 156 H371.7"/></g><g><rect class="flow-node" x="375.7" y="118" width="144.9" height="76" rx="18"/><text x="448.1" y="152" text-anchor="middle" class="node-title">Run pipeline</text><text x="448.1" y="172" text-anchor="middle" class="node-sub">Step 3</text></g><g class="flow-arrow"><path class="hit" d="M524.6 156 H538.6"/><path class="line" d="M524.6 156 H538.6"/></g><g><rect class="flow-node" x="542.6" y="118" width="144.9" height="76" rx="18"/><text x="615.0" y="152" text-anchor="middle" class="node-title">Deploy apps</text><text x="615.0" y="172" text-anchor="middle" class="node-sub">Step 4</text></g><g class="flow-arrow"><path class="hit" d="M691.4 156 H705.4"/><path class="line" d="M691.4 156 H705.4"/></g><g><rect class="flow-node" x="709.4" y="118" width="144.9" height="76" rx="18"/><text x="781.9" y="152" text-anchor="middle" class="node-title">Use platform</text><text x="781.9" y="172" text-anchor="middle" class="node-sub">Step 5</text></g><g class="flow-arrow"><path class="hit" d="M858.3 156 H872.3"/><path class="line" d="M858.3 156 H872.3"/></g><g><rect class="flow-node" x="876.3" y="118" width="144.9" height="76" rx="18"/><text x="948.7" y="152" text-anchor="middle" class="node-title">Destroy compute</text><text x="948.7" y="172" text-anchor="middle" class="node-sub">Step 6</text></g><g class="flow-arrow"><path class="hit" d="M1025.1 156 H1039.1"/><path class="line" d="M1025.1 156 H1039.1"/></g><g><rect class="flow-node" x="1043.1" y="118" width="144.9" height="76" rx="18"/><text x="1115.6" y="152" text-anchor="middle" class="node-title">S3 data preserved</text><text x="1115.6" y="172" text-anchor="middle" class="node-sub">Step 7</text></g>
+      </svg>
+    
+      <div class="explain">
+        <div><strong>Primary responsibility</strong><span>This diagram isolates the work owned by this repository from the rest of the platform.</span></div>
+        <div><strong>Input and output</strong><span>The left side shows what the repo receives; the right side shows what it hands to the next layer.</span></div>
+        <div><strong>Operational boundary</strong><span>The README has exact commands; this page shows the mental model behind those commands.</span></div>
+      </div>
     </section>
 
-    <section class="story">
-      <article class="panel">
-        <div class="eyebrow">Why this repo exists</div>
-        <h2>Visual summary</h2>
-        <ul><li>Starts the full AWS dev session when work begins and destroys compute when done.</li><li>Coordinates infrastructure, data pipeline, and application readiness across repos.</li><li>Keeps S3 data while removing idle compute to control cost.</li></ul>
-      </article>
-      <article class="panel">
-        <div class="eyebrow">Where to go next</div>
-        <h2>Use the right source</h2>
-        <p>This page is the fast visual path. The markdown README remains the source of truth for setup commands, environment variables, troubleshooting, and exact operational steps.</p>
-        <div class="cta">
-          <a class="button primary" href="https://enterprise-data-platform-emeka.github.io/platform-session-orchestrator/html/?v=latest">Open HTML version</a>
-          <a class="button" href="../README.md">Open README.md</a>
-          <a class="button" href="https://github.com/enterprise-data-platform-emeka/platform-session-orchestrator">Open GitHub repo</a>
+    <section class="diagram-card">
+      <header>
+        <div class="eyebrow">Runtime sequence</div>
+        <h2>How work moves through the repo</h2>
+      </header>
+      
+      <svg viewBox="0 0 1230 560" role="img" aria-label="Runtime interaction sequence">
+        <defs>
+          <marker id="arrow-dark" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+          <marker id="arrow-accent" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#2563eb"/></marker>
+        </defs>
+        <rect x="0" y="0" width="1230" height="560" rx="28" fill="#fbfdff"/>
+        <text x="40" y="38" class="diagram-heading">Runtime interaction</text>
+        <line class="swimlane" x1="82.0" y1="96" x2="82.0" y2="500"/><rect class="actor-box" x="18.0" y="46" width="128" height="42" rx="12"/><text class="actor-label" x="82.0" y="72" text-anchor="middle">GitHub Actions</text><line class="swimlane" x1="295.2" y1="96" x2="295.2" y2="500"/><rect class="actor-box" x="231.2" y="46" width="128" height="42" rx="12"/><text class="actor-label" x="295.2" y="72" text-anchor="middle">Terraform</text><line class="swimlane" x1="508.4" y1="96" x2="508.4" y2="500"/><rect class="actor-box" x="444.4" y="46" width="128" height="42" rx="12"/><text class="actor-label" x="508.4" y="72" text-anchor="middle">Pipeline</text><line class="swimlane" x1="721.6" y1="96" x2="721.6" y2="500"/><rect class="actor-box" x="657.6" y="46" width="128" height="42" rx="12"/><text class="actor-label" x="721.6" y="72" text-anchor="middle">Applications</text><line class="swimlane" x1="934.8" y1="96" x2="934.8" y2="500"/><rect class="actor-box" x="870.8" y="46" width="128" height="42" rx="12"/><text class="actor-label" x="934.8" y="72" text-anchor="middle">AWS compute</text><line class="swimlane" x1="1148.0" y1="96" x2="1148.0" y2="500"/><rect class="actor-box" x="1084.0" y="46" width="128" height="42" rx="12"/><text class="actor-label" x="1148.0" y="72" text-anchor="middle">S3 data</text>
+        <g class="flow-arrow accent"><path class="hit" d="M82.0 138 H295.2"/><path class="line" d="M82.0 138 H295.2"/><text x="188.6" y="128" text-anchor="middle">1. Trigger</text></g><g class="flow-arrow accent"><path class="hit" d="M295.2 190 H508.4"/><path class="line" d="M295.2 190 H508.4"/><text x="401.8" y="180" text-anchor="middle">2. Route work</text></g><g class="flow-arrow accent"><path class="hit" d="M508.4 248 H721.6"/><path class="line" d="M508.4 248 H721.6"/><text x="615.0" y="238" text-anchor="middle">3. Process / generate</text></g><g class="flow-arrow accent"><path class="hit" d="M721.6 306 H934.8"/><path class="line" d="M721.6 306 H934.8"/><text x="828.2" y="296" text-anchor="middle">4. Read or write data</text></g><g class="flow-arrow return"><path class="hit" d="M934.8 364 H508.4"/><path class="line" d="M934.8 364 H508.4"/><text x="721.6" y="354" text-anchor="middle">5. Return evidence</text></g><g class="flow-arrow return"><path class="hit" d="M508.4 420 H295.2"/><path class="line" d="M508.4 420 H295.2"/><text x="401.8" y="410" text-anchor="middle">6. Package response</text></g><g class="flow-arrow return"><path class="hit" d="M295.2 470 H82.0"/><path class="line" d="M295.2 470 H82.0"/><text x="188.6" y="460" text-anchor="middle">7. Operational result</text></g>
+      </svg>
+    
+      <div class="explain">
+        <div><strong>Trigger</strong><span>A person, workflow, schedule, or frontend starts the sequence.</span></div>
+        <div><strong>Processing</strong><span>The repo performs its specialized job and returns evidence or artifacts.</span></div>
+        <div><strong>Handoff</strong><span>The output feeds another repository, platform layer, or stakeholder interface.</span></div>
+      </div>
+    </section>
+
+    <section id="concepts">
+      <div class="eyebrow">Beginner-friendly concept map</div>
+      <h2>Key ideas to understand</h2>
+      <div class="concept-grid">
+          <article class="concept-card">
+            <h3>Session start</h3>
+            <div class="mini-flow"><span class="mini-node">infra</span><span class="mini-arrow">→</span><span class="mini-node">pipeline</span><span class="mini-arrow">→</span><span class="mini-node">apps</span></div>
+            <p>One workflow brings up the resources needed for a work session.</p>
+          </article>
+        
+          <article class="concept-card">
+            <h3>Session destroy</h3>
+            <div class="mini-flow"><span class="mini-node">stop services</span><span class="mini-arrow">→</span><span class="mini-node">destroy compute</span><span class="mini-arrow">→</span><span class="mini-node">preserve data</span></div>
+            <p>Compute goes away; S3 history remains for future sessions.</p>
+          </article>
+        
+          <article class="concept-card">
+            <h3>Cost shape</h3>
+            <div class="mini-flow"><span class="mini-node">short-lived</span><span class="mini-arrow">→</span><span class="mini-node">repeatable</span><span class="mini-arrow">→</span><span class="mini-node">auditable</span></div>
+            <p>The platform is designed for learning and demos without idle spend.</p>
+          </article>
         </div>
-      </article>
     </section>
 
-    <section class="grid" id="sections">
-      <article class="card"><h3>How a session works</h3><p>A typical 2 to 3 hour session costs around $1.50 to $2.50 total. S3 (Simple Storage Service) buckets are preserved across sessions so Bronze,...</p></article><article class="card"><h3>Workflows</h3><p>session start.yml Orchestrates a full session from scratch. It checks out each component repo using a GitHub PAT (Personal Access Token), runs the...</p></article><article class="card"><h3>Prerequisites</h3><p>These are one time setup steps. Once done, the workflows run without any manual AWS CLI commands. 1. terraform bootstrap applied in each account...</p></article><article class="card"><h3>Secrets and variables</h3><p>All secrets are scoped per GitHub Environment (Settings Environments {env}). Required secrets Secret When required GH PAT Always — cross repo...</p></article><article class="card"><h3>Typical session sequence</h3><p>Step Functions session (fast, use this for most sessions) MWAA session (use when Airflow UI is needed)</p></article><article class="card"><h3>Cost reference</h3><p>Item Cost Full dev/staging session (2 3 hr) ~$1.50 $2.50 DMS replication instance ~$0.10/hr RDS PostgreSQL ~$0.02/hr Per Analytics Agent question...</p></article><article class="card"><h3>Repository structure</h3><p>There is no application code in this repo. All logic is in the GitHub Actions workflow YAML files, which coordinate the other platform repos via...</p></article>
+    <section>
+      <div class="eyebrow">README navigation</div>
+      <h2>Detailed sections in the markdown README</h2>
+      <div class="sections">
+          <article class="section-tile">
+            <span>01</span>
+            <strong>How a session works</strong>
+          </article>
+        
+          <article class="section-tile">
+            <span>02</span>
+            <strong>Workflows</strong>
+          </article>
+        
+          <article class="section-tile">
+            <span>03</span>
+            <strong>Prerequisites</strong>
+          </article>
+        
+          <article class="section-tile">
+            <span>04</span>
+            <strong>Secrets and variables</strong>
+          </article>
+        
+          <article class="section-tile">
+            <span>05</span>
+            <strong>Typical session sequence</strong>
+          </article>
+        
+          <article class="section-tile">
+            <span>06</span>
+            <strong>Cost reference</strong>
+          </article>
+        </div>
     </section>
 
-    <p class="footer">Generated from the root README. Existing markdown remains unchanged as the canonical detailed reference.</p>
+    <p class="footer">Use this page to understand the architecture visually; use the rendered README for exact setup and troubleshooting details.</p>
   </main>
 </body>
 </html>
