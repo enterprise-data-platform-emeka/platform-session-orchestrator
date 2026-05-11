@@ -1,3 +1,5 @@
+> **Prefer a visual version?** Open the [responsive HTML README](https://enterprise-data-platform-emeka.github.io/platform-session-orchestrator/html/?v=latest).
+
 # platform-session-orchestrator
 
 This repo is the lifecycle controller for the Enterprise Data Platform (EDP). It doesn't contain application code — it contains two GitHub Actions (GHA) workflows that start and destroy a full EDP session across all component repos.
