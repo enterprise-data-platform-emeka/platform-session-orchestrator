@@ -102,9 +102,127 @@ jobs:
           fi
 
       - name: Terraform destroy (preserves S3 data buckets)
+        id: terraform_destroy
+        continue-on-error: true
         run: make destroy-safe ${{ env.ENV }}
 
+      - name: Schedule leftover customer-managed KMS keys
+        run: |
+          set -euo pipefail
+
+          echo "Checking for leftover customer-managed KMS keys tagged for ${ENV}..."
+          KEY_ARNS=$(aws resourcegroupstaggingapi get-resources \
+            --region "${AWS_REGION}" \
+            --tag-filters Key=Environment,Values="${ENV}" Key=Project,Values=EnterpriseDataPlatform \
+            --resource-type-filters kms:key \
+            --query 'ResourceTagMappingList[].ResourceARN' \
+            --output text)
+
+          if [ -z "${KEY_ARNS}" ] || [ "${KEY_ARNS}" = "None" ]; then
+            echo "No tagged KMS keys found."
+            exit 0
+          fi
+
+          for KEY_ARN in ${KEY_ARNS}; do
+            KEY_MANAGER=$(aws kms describe-key \
+              --region "${AWS_REGION}" \
+              --key-id "${KEY_ARN}" \
+              --query 'KeyMetadata.KeyManager' \
+              --output text)
+            KEY_STATE=$(aws kms describe-key \
+              --region "${AWS_REGION}" \
+              --key-id "${KEY_ARN}" \
+              --query 'KeyMetadata.KeyState' \
+              --output text)
+
+            if [ "${KEY_MANAGER}" != "CUSTOMER" ]; then
+              echo "Skipping AWS-managed key: ${KEY_ARN}"
+              continue
+            fi
+
+            if [ "${KEY_STATE}" = "PendingDeletion" ] || [ "${KEY_STATE}" = "PendingReplicaDeletion" ]; then
+              echo "KMS key already pending deletion: ${KEY_ARN}"
+              continue
+            fi
+
+            echo "Scheduling KMS key for deletion: ${KEY_ARN}"
+            aws kms schedule-key-deletion \
+              --region "${AWS_REGION}" \
+              --key-id "${KEY_ARN}" \
+              --pending-window-in-days 7
+          done
+
+          cd environments/${ENV}
+          terraform state rm module.iam_metadata.aws_kms_key.platform || true
+
+      - name: Verify no billable session resources remain
+        run: |
+          set -euo pipefail
+
+          failures=0
+
+          RDS_INSTANCES=$(aws rds describe-db-instances \
+            --region "${AWS_REGION}" \
+            --query "DBInstances[?starts_with(DBInstanceIdentifier, \`edp-${ENV}-\`)].DBInstanceIdentifier" \
+            --output text)
+          if [ -n "${RDS_INSTANCES}" ] && [ "${RDS_INSTANCES}" != "None" ]; then
+            echo "ERROR: RDS instances still exist: ${RDS_INSTANCES}"
+            failures=1
+          fi
+
+          NAT_GATEWAYS=$(aws ec2 describe-nat-gateways \
+            --region "${AWS_REGION}" \
+            --filter Name=state,Values=pending,available,deleting Name=tag:Environment,Values="${ENV}" \
+            --query 'NatGateways[].NatGatewayId' \
+            --output text)
+          if [ -n "${NAT_GATEWAYS}" ] && [ "${NAT_GATEWAYS}" != "None" ]; then
+            echo "ERROR: NAT gateways still exist: ${NAT_GATEWAYS}"
+            failures=1
+          fi
+
+          ELASTIC_IPS=$(aws ec2 describe-addresses \
+            --region "${AWS_REGION}" \
+            --filters Name=tag:Environment,Values="${ENV}" \
+            --query 'Addresses[?AssociationId==null].AllocationId' \
+            --output text)
+          if [ -n "${ELASTIC_IPS}" ] && [ "${ELASTIC_IPS}" != "None" ]; then
+            echo "ERROR: Unassociated Elastic IPs still exist: ${ELASTIC_IPS}"
+            failures=1
+          fi
+
+          ACTIVE_KMS_KEYS=$(aws resourcegroupstaggingapi get-resources \
+            --region "${AWS_REGION}" \
+            --tag-filters Key=Environment,Values="${ENV}" Key=Project,Values=EnterpriseDataPlatform \
+            --resource-type-filters kms:key \
+            --query 'ResourceTagMappingList[].ResourceARN' \
+            --output text)
+          for KEY_ARN in ${ACTIVE_KMS_KEYS}; do
+            KEY_STATE=$(aws kms describe-key \
+              --region "${AWS_REGION}" \
+              --key-id "${KEY_ARN}" \
+              --query 'KeyMetadata.KeyState' \
+              --output text)
+            if [ "${KEY_STATE}" != "PendingDeletion" ] && [ "${KEY_STATE}" != "PendingReplicaDeletion" ]; then
+              echo "ERROR: customer-managed KMS key is not pending deletion: ${KEY_ARN} (${KEY_STATE})"
+              failures=1
+            fi
+          done
+
+          if [ "${failures}" -ne 0 ]; then
+            echo "Post-destroy billable resource check failed."
+            exit 1
+          fi
+
+          echo "Post-destroy billable resource check passed."
+
+      - name: Fail if Terraform destroy failed
+        if: ${{ steps.terraform_destroy.outcome != 'success' }}
+        run: |
+          echo "Terraform destroy failed before cleanup completed. Cleanup guards ran, but inspect the Terraform logs."
+          exit 1
+
       - name: Destroy summary
+        if: ${{ steps.terraform_destroy.outcome == 'success' }}
         run: |
           echo ""
           echo "================================================"
