@@ -6,23 +6,23 @@
   <title>platform-session-orchestrator — HTML README</title>
   <style>
     :root {
-      --accent: #0891b2;
+      --accent: #16a34a;
       --page: #f8fafc;
       --surface: #ffffff;
-      --surface-soft: #f1f5f9;
+      --soft: #eef4fb;
       --ink: #0f172a;
-      --muted: #475569;
+      --muted: #526175;
       --line: #d8e2ee;
-      --shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+      --shadow: 0 20px 55px rgba(15, 23, 42, 0.09);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      color: var(--ink);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
       background:
-        radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 12%, transparent), transparent 34rem),
-        var(--page);
+        radial-gradient(circle at 16% 0%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 30rem),
+        linear-gradient(180deg, #fff 0, var(--page) 38rem);
     }
     a { color: var(--accent); text-decoration: none; }
     .topbar {
@@ -31,123 +31,57 @@
       z-index: 10;
       display: flex;
       justify-content: space-between;
-      align-items: center;
       gap: 1rem;
-      padding: 0.9rem 1.4rem;
+      align-items: center;
+      padding: 0.9rem 1.2rem;
       border-bottom: 1px solid var(--line);
       background: rgba(255,255,255,0.92);
       backdrop-filter: blur(14px);
     }
-    .brand { display: flex; align-items: center; gap: 0.75rem; font-weight: 900; }
-    .mark {
-      width: 38px;
-      height: 38px;
-      border-radius: 10px;
-      display: grid;
-      place-items: center;
-      color: #fff;
-      background: var(--accent);
-      box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 28%, transparent);
-      font-size: 0.8rem;
-    }
+    .brand { display: flex; align-items: center; gap: 0.75rem; font-weight: 950; }
+    .mark { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; background: var(--accent); color: #fff; box-shadow: 0 12px 26px color-mix(in srgb, var(--accent) 30%, transparent); font-size: 0.78rem; }
     .nav { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-    .nav a {
-      padding: 0.52rem 0.75rem;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      background: #fff;
-      color: var(--muted);
-      font-size: 0.86rem;
-      font-weight: 750;
-    }
-    .wrap { width: min(1180px, calc(100vw - 2rem)); margin: 0 auto; padding: 1.2rem 0 4rem; }
-    .hero {
-      display: grid;
-      grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
-      gap: 1rem;
-      align-items: stretch;
-      margin-top: 1rem;
-    }
-    .hero-card, .panel {
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      background: rgba(255,255,255,0.94);
-      box-shadow: var(--shadow);
-    }
+    .nav a { border: 1px solid var(--line); border-radius: 999px; padding: 0.5rem 0.72rem; color: var(--muted); background: #fff; font-size: 0.84rem; font-weight: 800; }
+    .wrap { width: min(1180px, calc(100vw - 2rem)); margin: 0 auto; padding: 1rem 0 4rem; }
+    .hero { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.6fr); gap: 1rem; margin: 1rem 0; }
+    .panel, .hero-card, .card { border: 1px solid var(--line); border-radius: 20px; background: rgba(255,255,255,0.94); box-shadow: var(--shadow); }
     .hero-card { padding: 2rem; }
-    .eyebrow {
-      color: var(--accent);
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      font-size: 0.72rem;
-      font-weight: 950;
-    }
-    h1 {
-      margin: 0.45rem 0 0.8rem;
-      max-width: 820px;
-      font-size: clamp(2.2rem, 5vw, 4.4rem);
-      line-height: 0.95;
-      letter-spacing: -0.05em;
-    }
-    .intro { max-width: 820px; color: var(--muted); font-size: 1.03rem; line-height: 1.65; }
-    .meta {
-      display: grid;
-      gap: 0.7rem;
-      padding: 1rem;
-    }
-    .metric {
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 1rem;
-      background: var(--surface-soft);
-    }
-    .metric span { display: block; color: var(--muted); font-size: 0.78rem; font-weight: 750; }
-    .metric strong { display: block; margin-top: 0.35rem; font-size: 1.6rem; color: var(--ink); }
-    .diagram { margin: 1rem 0; overflow: hidden; border-radius: 22px; border: 1px solid var(--line); box-shadow: var(--shadow); }
-    .diagram svg { display: block; width: 100%; height: auto; }
+    .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.72rem; font-weight: 950; }
+    h1 { margin: 0.45rem 0 0.75rem; font-size: clamp(2.2rem, 5vw, 4.6rem); line-height: 0.95; letter-spacing: -0.05em; }
+    h2 { margin: 0.35rem 0 0.6rem; font-size: clamp(1.4rem, 3vw, 2.1rem); letter-spacing: -0.03em; }
+    h3 { margin: 0; font-size: 1rem; }
+    p { color: var(--muted); line-height: 1.58; }
+    .tags { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem; }
+    .tags span { padding: 0.44rem 0.65rem; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line)); background: color-mix(in srgb, var(--accent) 7%, #fff); color: #1f2937; font-weight: 800; font-size: 0.82rem; }
+    .stats { display: grid; gap: 0.7rem; padding: 1rem; }
+    .stat { padding: 0.95rem; border: 1px solid var(--line); border-radius: 14px; background: var(--soft); }
+    .stat span { display: block; color: var(--muted); font-size: 0.76rem; font-weight: 800; }
+    .stat strong { display: block; margin-top: 0.24rem; font-size: 1.55rem; color: var(--ink); }
+    .diagram { margin: 1rem 0; border: 1px solid var(--line); border-radius: 24px; background: #fff; box-shadow: var(--shadow); overflow-x: auto; }
+    .diagram svg { display: block; min-width: 920px; width: 100%; height: auto; }
+    .flow-arrow .hit { stroke: transparent; stroke-width: 18; fill: none; pointer-events: stroke; }
+    .flow-arrow .line { fill: none; stroke: #334155; stroke-width: 2.4; marker-end: url(#arrow-dark); transition: stroke 0.18s ease, stroke-width 0.18s ease, filter 0.18s ease; }
+    .flow-arrow.return .line { stroke: #64748b; stroke-dasharray: 6 6; marker-end: url(#arrow-dark); }
+    .flow-arrow.accent .line { stroke: var(--accent); marker-end: url(#arrow-accent); }
+    .flow-arrow:hover .line { stroke: var(--accent); stroke-width: 4; stroke-dasharray: 12 8; animation: flowDash 0.8s linear infinite; filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent) 75%, transparent)); marker-end: url(#arrow-accent); }
+    .flow-arrow text { fill: #0f172a; font-size: 12px; font-weight: 760; pointer-events: none; }
+    .flow-arrow:hover text { fill: var(--accent); font-weight: 950; }
+    @keyframes flowDash { to { stroke-dashoffset: -40; } }
     .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 1rem; }
-    .panel { padding: 1.1rem; }
-    .panel h2, .panel h3 { margin: 0; }
-    .panel h2 { font-size: 1.25rem; }
-    .panel h3 { font-size: 1rem; }
-    .panel p { color: var(--muted); line-height: 1.58; }
-    .section-card {
-      min-height: 170px;
-      display: flex;
-      flex-direction: column;
-      gap: 0.7rem;
-      border-top: 4px solid var(--accent);
-    }
-    .pill-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.85rem; }
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.35rem;
-      padding: 0.42rem 0.62rem;
-      border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
-      border-radius: 999px;
-      background: color-mix(in srgb, var(--accent) 7%, #fff);
-      color: #1f2937;
-      font-size: 0.83rem;
-      font-weight: 750;
-    }
-    .command-list { display: grid; gap: 0.55rem; margin-top: 0.9rem; }
-    code {
-      display: block;
-      padding: 0.74rem 0.85rem;
-      border-radius: 12px;
-      background: #111827;
-      color: #f8fafc;
-      overflow-wrap: anywhere;
-      font-family: "SFMono-Regular", "JetBrains Mono", monospace;
-      font-size: 0.84rem;
-    }
-    .wide { grid-column: 1 / -1; }
-    .footer { margin-top: 1.5rem; color: var(--muted); text-align: center; font-size: 0.9rem; }
+    .card { padding: 1.05rem; min-height: 156px; border-top: 4px solid var(--accent); }
+    .card p { margin-bottom: 0; }
+    .story { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 1rem; margin-top: 1rem; }
+    .panel { padding: 1.15rem; }
+    .story ul { margin: 0.8rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.65rem; }
+    .story li { padding: 0.8rem; border-radius: 14px; background: var(--soft); border: 1px solid var(--line); color: var(--muted); line-height: 1.45; }
+    .cta { display: flex; flex-wrap: wrap; gap: 0.65rem; margin-top: 1rem; }
+    .button { display: inline-flex; align-items: center; justify-content: center; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line)); border-radius: 999px; padding: 0.62rem 0.85rem; background: #fff; font-weight: 900; }
+    .primary { background: var(--accent); color: #fff; box-shadow: 0 12px 24px color-mix(in srgb, var(--accent) 28%, transparent); }
+    .footer { text-align: center; color: var(--muted); font-size: 0.88rem; margin-top: 1.4rem; }
     @media (max-width: 900px) {
-      .hero, .grid { grid-template-columns: 1fr; }
-      .topbar { align-items: flex-start; flex-direction: column; }
-      h1 { font-size: 2.4rem; }
+      .topbar { flex-direction: column; align-items: flex-start; }
+      .hero, .grid, .story { grid-template-columns: 1fr; }
+      .diagram svg { min-width: 820px; }
     }
   </style>
 </head>
@@ -155,149 +89,132 @@
   <header class="topbar">
     <div class="brand"><div class="mark">EDP</div><span>platform-session-orchestrator</span></div>
     <nav class="nav">
-      <a href="../README.md">README.md</a>
-      <a href="#diagram">Diagram</a>
+      <a href="https://enterprise-data-platform-emeka.github.io/platform-session-orchestrator/html/?v=latest">HTML README</a>
+      <a href="../README.md">Markdown README</a>
+      <a href="#flow">Flow</a>
       <a href="#sections">Sections</a>
-      <a href="#commands">Commands</a>
     </nav>
   </header>
-
   <main class="wrap">
     <section class="hero">
       <div class="hero-card">
-        <div class="eyebrow">One-click platform session controller</div>
+        <div class="eyebrow">Enterprise Data Platform repository</div>
         <h1>platform-session-orchestrator</h1>
-        <p class="intro">This repo is the lifecycle controller for the Enterprise Data Platform (EDP). It doesn&#039;t contain application code — it contains two GitHub Actions (GHA) workflows that start and destroy a full EDP session across all component repos.</p>
-        <div class="pill-row">
-          <span class="pill">GitHub Actions</span><span class="pill">Terraform</span><span class="pill">Step Functions</span><span class="pill">MWAA</span><span class="pill">ECS</span><span class="pill">Slack</span>
-        </div>
+        <p>GitHub Actions lifecycle controller for start and destroy sessions.</p>
+        <div class="tags"><span>Session start</span><span>Session destroy</span><span>Cost control</span><span>CI orchestration</span></div>
       </div>
-      <aside class="panel meta" aria-label="README summary">
-        <div class="metric"><span>README length</span><strong>260</strong></div>
-        <div class="metric"><span>Major sections</span><strong>7</strong></div>
-        <div class="metric"><span>Code examples</span><strong>8</strong></div>
-        <div class="metric"><span>Tables</span><strong>17</strong></div>
+      <aside class="panel stats" aria-label="README stats">
+        <div class="stat"><span>README lines</span><strong>261</strong></div>
+        <div class="stat"><span>Major sections</span><strong>7</strong></div>
+        <div class="stat"><span>Code fences</span><strong>8</strong></div>
+        <div class="stat"><span>Table rows</span><strong>31</strong></div>
       </aside>
     </section>
 
-    <section id="diagram" class="diagram">
-      
-    <svg viewBox="0 0 1120 260" role="img" aria-label="Repository workflow diagram">
-      <defs>
-        <marker id="arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-          <path d="M0,0 L0,6 L8,3 z" fill="#0891b2"/>
-        </marker>
-        <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
-          <stop stop-color="#0891b2" stop-opacity="0.12"/>
-          <stop offset="1" stop-color="#ffffff" stop-opacity="1"/>
-        </linearGradient>
-      </defs>
-      <rect x="0" y="0" width="1120" height="260" rx="24" fill="url(#bg)"/>
-      <text x="32" y="48" fill="#0f172a" font-size="24" font-weight="900">How this repository fits into the platform</text>
-      <text x="32" y="76" fill="#475569" font-size="14">A compact visual reading path distilled from the README.</text>
-      
-        <g>
-          <rect x="24" y="96" width="158" height="72" rx="16" fill="#ffffff" stroke="#d8e2ee"/>
-          <circle cx="48" cy="132" r="12" fill="#0891b2" opacity="0.14"/>
-          <circle cx="48" cy="132" r="5" fill="#0891b2"/>
-          <text x="68" y="127" fill="#0f172a" font-size="15" font-weight="800">Start</text>
-          <text x="68" y="148" fill="#64748b" font-size="12">Step 1</text>
-          <path d="M 186 130 L 198 130" stroke="#0891b2" stroke-width="3" marker-end="url(#arrow)" opacity="0.72"/>
-        </g>
-        <g>
-          <rect x="206" y="96" width="158" height="72" rx="16" fill="#ffffff" stroke="#d8e2ee"/>
-          <circle cx="230" cy="132" r="12" fill="#0891b2" opacity="0.14"/>
-          <circle cx="230" cy="132" r="5" fill="#0891b2"/>
-          <text x="250" y="127" fill="#0f172a" font-size="15" font-weight="800">Terraform apply</text>
-          <text x="250" y="148" fill="#64748b" font-size="12">Step 2</text>
-          <path d="M 368 130 L 380 130" stroke="#0891b2" stroke-width="3" marker-end="url(#arrow)" opacity="0.72"/>
-        </g>
-        <g>
-          <rect x="388" y="96" width="158" height="72" rx="16" fill="#ffffff" stroke="#d8e2ee"/>
-          <circle cx="412" cy="132" r="12" fill="#0891b2" opacity="0.14"/>
-          <circle cx="412" cy="132" r="5" fill="#0891b2"/>
-          <text x="432" y="127" fill="#0f172a" font-size="15" font-weight="800">Deploy assets</text>
-          <text x="432" y="148" fill="#64748b" font-size="12">Step 3</text>
-          <path d="M 550 130 L 562 130" stroke="#0891b2" stroke-width="3" marker-end="url(#arrow)" opacity="0.72"/>
-        </g>
-        <g>
-          <rect x="570" y="96" width="158" height="72" rx="16" fill="#ffffff" stroke="#d8e2ee"/>
-          <circle cx="594" cy="132" r="12" fill="#0891b2" opacity="0.14"/>
-          <circle cx="594" cy="132" r="5" fill="#0891b2"/>
-          <text x="614" y="127" fill="#0f172a" font-size="15" font-weight="800">Run pipeline</text>
-          <text x="614" y="148" fill="#64748b" font-size="12">Step 4</text>
-          <path d="M 732 130 L 744 130" stroke="#0891b2" stroke-width="3" marker-end="url(#arrow)" opacity="0.72"/>
-        </g>
-        <g>
-          <rect x="752" y="96" width="158" height="72" rx="16" fill="#ffffff" stroke="#d8e2ee"/>
-          <circle cx="776" cy="132" r="12" fill="#0891b2" opacity="0.14"/>
-          <circle cx="776" cy="132" r="5" fill="#0891b2"/>
-          <text x="796" y="127" fill="#0f172a" font-size="15" font-weight="800">Test URLs</text>
-          <text x="796" y="148" fill="#64748b" font-size="12">Step 5</text>
-          <path d="M 914 130 L 926 130" stroke="#0891b2" stroke-width="3" marker-end="url(#arrow)" opacity="0.72"/>
-        </g>
-        <g>
-          <rect x="934" y="96" width="158" height="72" rx="16" fill="#ffffff" stroke="#d8e2ee"/>
-          <circle cx="958" cy="132" r="12" fill="#0891b2" opacity="0.14"/>
-          <circle cx="958" cy="132" r="5" fill="#0891b2"/>
-          <text x="978" y="127" fill="#0f172a" font-size="15" font-weight="800">Destroy</text>
-          <text x="978" y="148" fill="#64748b" font-size="12">Step 6</text>
-          
-        </g>
-    </svg>
+    <section class="diagram" id="flow">
+      <svg viewBox="0 0 1120 250" role="img" aria-label="Repository role flow diagram">
+<defs>
+<marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#16a34a"/></marker>
+<marker id="arrow-dark" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+<marker id="arrow-accent" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#16a34a"/></marker>
+<linearGradient id="heroFlow" x1="0" x2="1"><stop stop-color="#16a34a" stop-opacity="0.12"/><stop offset="1" stop-color="#ffffff"/></linearGradient>
+</defs>
+<rect x="0" y="0" width="1120" height="250" rx="28" fill="url(#heroFlow)"/>
+<text x="32" y="45" fill="#0f172a" font-size="22" font-weight="900">Repository role in the platform</text>
+<text x="32" y="72" fill="#64748b" font-size="14">Hover arrows on the diagrams below to follow runtime flow.</text>
+<rect x="32.0" y="112" width="157.7" height="70" rx="16" fill="#fff" stroke="#dbe5f2"/>
+<circle cx="56.0" cy="147" r="12" fill="#16a34a" opacity="0.14"/>
+<circle cx="56.0" cy="147" r="5" fill="#16a34a"/>
+<text x="76.0" y="144" fill="#0f172a" font-size="13" font-weight="850">Start workflow</text>
+<text x="76.0" y="162" fill="#64748b" font-size="11">Step 1</text>
+<g class="flow-arrow"><path class="hit" d="M193.7 147 H205.7"/><path class="line" d="M193.7 147 H205.7"/></g>
+<rect x="211.7" y="112" width="157.7" height="70" rx="16" fill="#fff" stroke="#dbe5f2"/>
+<circle cx="235.7" cy="147" r="12" fill="#16a34a" opacity="0.14"/>
+<circle cx="235.7" cy="147" r="5" fill="#16a34a"/>
+<text x="255.7" y="144" fill="#0f172a" font-size="13" font-weight="850">Terraform apply</text>
+<text x="255.7" y="162" fill="#64748b" font-size="11">Step 2</text>
+<g class="flow-arrow"><path class="hit" d="M373.3 147 H385.3"/><path class="line" d="M373.3 147 H385.3"/></g>
+<rect x="391.3" y="112" width="157.7" height="70" rx="16" fill="#fff" stroke="#dbe5f2"/>
+<circle cx="415.3" cy="147" r="12" fill="#16a34a" opacity="0.14"/>
+<circle cx="415.3" cy="147" r="5" fill="#16a34a"/>
+<text x="435.3" y="144" fill="#0f172a" font-size="13" font-weight="850">Run pipeline</text>
+<text x="435.3" y="162" fill="#64748b" font-size="11">Step 3</text>
+<g class="flow-arrow"><path class="hit" d="M553.0 147 H565.0"/><path class="line" d="M553.0 147 H565.0"/></g>
+<rect x="571.0" y="112" width="157.7" height="70" rx="16" fill="#fff" stroke="#dbe5f2"/>
+<circle cx="595.0" cy="147" r="12" fill="#16a34a" opacity="0.14"/>
+<circle cx="595.0" cy="147" r="5" fill="#16a34a"/>
+<text x="615.0" y="144" fill="#0f172a" font-size="13" font-weight="850">Use platform</text>
+<text x="615.0" y="162" fill="#64748b" font-size="11">Step 4</text>
+<g class="flow-arrow"><path class="hit" d="M732.7 147 H744.7"/><path class="line" d="M732.7 147 H744.7"/></g>
+<rect x="750.7" y="112" width="157.7" height="70" rx="16" fill="#fff" stroke="#dbe5f2"/>
+<circle cx="774.7" cy="147" r="12" fill="#16a34a" opacity="0.14"/>
+<circle cx="774.7" cy="147" r="5" fill="#16a34a"/>
+<text x="794.7" y="144" fill="#0f172a" font-size="13" font-weight="850">Destroy workflow</text>
+<text x="794.7" y="162" fill="#64748b" font-size="11">Step 5</text>
+<g class="flow-arrow"><path class="hit" d="M912.3 147 H924.3"/><path class="line" d="M912.3 147 H924.3"/></g>
+<rect x="930.3" y="112" width="157.7" height="70" rx="16" fill="#fff" stroke="#dbe5f2"/>
+<circle cx="954.3" cy="147" r="12" fill="#16a34a" opacity="0.14"/>
+<circle cx="954.3" cy="147" r="5" fill="#16a34a"/>
+<text x="974.3" y="144" fill="#0f172a" font-size="13" font-weight="850">Compute off</text>
+<text x="974.3" y="162" fill="#64748b" font-size="11">Step 6</text>
+</svg>
     </section>
 
-    <section class="grid" id="sections">
-      <article class="panel wide">
-        <div class="eyebrow">README compressed</div>
-        <h2>Read this page first, then use README.md for exact commands and edge cases.</h2>
-        <p>This HTML explainer keeps the same intent as the root README but converts the long-form markdown into a visual map, compact summaries, and a short workflow reference.</p>
-      </article>
-      
-      <article class="panel section-card">
-        <h3>How a session works</h3>
-        <p>A typical 2 to 3 hour session costs around $1.50 to $2.50 total. S3 (Simple Storage Service) buckets are preserved across sessions so Bronze, Silver, and Gold data accumulates over time without paying for idle compute. ---</p>
-      </article>
-      <article class="panel section-card">
-        <h3>Workflows</h3>
-        <p>session-start.yml Orchestrates a full session from scratch. It checks out each component repo using a GitHub PAT (Personal Access Token), runs the relevant deploy steps, and confirms the platform is ready before finishing. Job dependency graph: Inputs: Input T</p>
-      </article>
-      <article class="panel section-card">
-        <h3>Prerequisites</h3>
-        <p>These are one-time setup steps. Once done, the workflows run without any manual AWS CLI commands. 1. terraform-bootstrap applied in each account (dev, staging, prod). This creates the OIDC (OpenID Connect) provider, edp-{env}-github-actions-role , the Terrafor</p>
-      </article>
-      <article class="panel section-card">
-        <h3>Secrets and variables</h3>
-        <p>All secrets are scoped per GitHub Environment (Settings Environments {env}). Required secrets: Secret When required --- --- GH PAT Always — cross-repo checkout DB PASSWORD When run cdc simulator=true REDSHIFT ADMIN PASSWORD When serving layer=redshift-bi (and </p>
-      </article>
-      <article class="panel section-card">
-        <h3>Typical session sequence</h3>
-        <p>Step Functions session (fast, use this for most sessions): MWAA session (use when Airflow UI is needed): ---</p>
-      </article>
-      <article class="panel section-card">
-        <h3>Cost reference</h3>
-        <p>Item Cost --- --- Full dev/staging session (2-3 hr) ~$1.50-$2.50 DMS replication instance ~$0.10/hr RDS PostgreSQL ~$0.02/hr Per Analytics Agent question ~$0.016 (Claude API ~$0.015 + Athena ~$0.001) S3 storage between sessions Negligible at demo data volumes </p>
-      </article>
-      <article class="panel section-card">
-        <h3>Repository structure</h3>
-        <p>There is no application code in this repo. All logic is in the GitHub Actions workflow YAML files, which coordinate the other platform repos via cross-repo checkout.</p>
-      </article>
+    <section class="diagram">
+      <svg viewBox="0 0 1120 560" role="img" aria-label="Runtime interaction diagram">
+<defs>
+<marker id="arrow-dark" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+<marker id="arrow-accent" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#16a34a"/></marker>
+</defs>
+<rect x="0" y="0" width="1120" height="560" rx="24" fill="#fbfdff"/>
+<line x1="72.0" y1="86" x2="72.0" y2="500" stroke="#bfdbfe" stroke-width="2"/>
+<rect x="10.0" y="36" width="124" height="40" rx="10" fill="#fff" stroke="#c7ddff"/>
+<text x="72.0" y="61" text-anchor="middle" fill="#0f172a" font-size="12" font-weight="900">GitHub Actions</text>
+<line x1="316.0" y1="86" x2="316.0" y2="500" stroke="#bfdbfe" stroke-width="2"/>
+<rect x="254.0" y="36" width="124" height="40" rx="10" fill="#fff" stroke="#c7ddff"/>
+<text x="316.0" y="61" text-anchor="middle" fill="#0f172a" font-size="12" font-weight="900">Terraform</text>
+<line x1="560.0" y1="86" x2="560.0" y2="500" stroke="#bfdbfe" stroke-width="2"/>
+<rect x="498.0" y="36" width="124" height="40" rx="10" fill="#fff" stroke="#c7ddff"/>
+<text x="560.0" y="61" text-anchor="middle" fill="#0f172a" font-size="12" font-weight="900">Data pipeline</text>
+<line x1="804.0" y1="86" x2="804.0" y2="500" stroke="#bfdbfe" stroke-width="2"/>
+<rect x="742.0" y="36" width="124" height="40" rx="10" fill="#fff" stroke="#c7ddff"/>
+<text x="804.0" y="61" text-anchor="middle" fill="#0f172a" font-size="12" font-weight="900">Apps</text>
+<line x1="1048.0" y1="86" x2="1048.0" y2="500" stroke="#bfdbfe" stroke-width="2"/>
+<rect x="986.0" y="36" width="124" height="40" rx="10" fill="#fff" stroke="#c7ddff"/>
+<text x="1048.0" y="61" text-anchor="middle" fill="#0f172a" font-size="12" font-weight="900">Teardown</text>
+<g class="flow-arrow accent"><path class="hit" d="M72.0 128 H316.0"/><path class="line" d="M72.0 128 H316.0"/><text x="194.0" y="118" text-anchor="middle">1. Request / trigger</text></g>
+<g class="flow-arrow accent"><path class="hit" d="M316.0 178 H560.0"/><path class="line" d="M316.0 178 H560.0"/><text x="438.0" y="168" text-anchor="middle">2. Route work</text></g>
+<g class="flow-arrow accent"><path class="hit" d="M560.0 236 H804.0"/><path class="line" d="M560.0 236 H804.0"/><text x="682.0" y="226" text-anchor="middle">3. Generate or transform</text></g>
+<g class="flow-arrow accent"><path class="hit" d="M804.0 294 H1048.0"/><path class="line" d="M804.0 294 H1048.0"/><text x="926.0" y="284" text-anchor="middle">4. Read/write governed data</text></g>
+<g class="flow-arrow return"><path class="hit" d="M1048.0 350 H560.0"/><path class="line" d="M1048.0 350 H560.0"/><text x="804.0" y="340" text-anchor="middle">5. Return evidence</text></g>
+<g class="flow-arrow return"><path class="hit" d="M560.0 404 H316.0"/><path class="line" d="M560.0 404 H316.0"/><text x="438.0" y="394" text-anchor="middle">6. Package response</text></g>
+<g class="flow-arrow return"><path class="hit" d="M316.0 458 H72.0"/><path class="line" d="M316.0 458 H72.0"/><text x="194.0" y="448" text-anchor="middle">7. Stakeholder output</text></g>
+</svg>
     </section>
 
-    <section class="grid" id="commands">
+    <section class="story">
       <article class="panel">
-        <div class="eyebrow">Typical workflow</div>
-        <h2>Command path</h2>
-        <p>Representative commands surfaced from the README. Use the original README for complete setup and environment-specific values.</p>
+        <div class="eyebrow">Why this repo exists</div>
+        <h2>Visual summary</h2>
+        <ul><li>Starts the full AWS dev session when work begins and destroys compute when done.</li><li>Coordinates infrastructure, data pipeline, and application readiness across repos.</li><li>Keeps S3 data while removing idle compute to control cost.</li></ul>
       </article>
-      <article class="panel wide">
-        <div class="command-list">
-          <code>---</code><code>**Job dependency graph:**</code><code>**Inputs:**</code><code>| Input | Type | Default | Description |</code><code>|---|---|---|---|</code><code>| `env` | choice | `dev` | Target environment: `dev`, `staging`, or `prod` |</code>
+      <article class="panel">
+        <div class="eyebrow">Where to go next</div>
+        <h2>Use the right source</h2>
+        <p>This page is the fast visual path. The markdown README remains the source of truth for setup commands, environment variables, troubleshooting, and exact operational steps.</p>
+        <div class="cta">
+          <a class="button primary" href="https://enterprise-data-platform-emeka.github.io/platform-session-orchestrator/html/?v=latest">Open HTML version</a>
+          <a class="button" href="../README.md">Open README.md</a>
+          <a class="button" href="https://github.com/enterprise-data-platform-emeka/platform-session-orchestrator">Open GitHub repo</a>
         </div>
       </article>
     </section>
 
-    <p class="footer">Generated from README.md. Existing markdown remains the source of truth.</p>
+    <section class="grid" id="sections">
+      <article class="card"><h3>How a session works</h3><p>A typical 2 to 3 hour session costs around $1.50 to $2.50 total. S3 (Simple Storage Service) buckets are preserved across sessions so Bronze,...</p></article><article class="card"><h3>Workflows</h3><p>session start.yml Orchestrates a full session from scratch. It checks out each component repo using a GitHub PAT (Personal Access Token), runs the...</p></article><article class="card"><h3>Prerequisites</h3><p>These are one time setup steps. Once done, the workflows run without any manual AWS CLI commands. 1. terraform bootstrap applied in each account...</p></article><article class="card"><h3>Secrets and variables</h3><p>All secrets are scoped per GitHub Environment (Settings Environments {env}). Required secrets Secret When required GH PAT Always — cross repo...</p></article><article class="card"><h3>Typical session sequence</h3><p>Step Functions session (fast, use this for most sessions) MWAA session (use when Airflow UI is needed)</p></article><article class="card"><h3>Cost reference</h3><p>Item Cost Full dev/staging session (2 3 hr) ~$1.50 $2.50 DMS replication instance ~$0.10/hr RDS PostgreSQL ~$0.02/hr Per Analytics Agent question...</p></article><article class="card"><h3>Repository structure</h3><p>There is no application code in this repo. All logic is in the GitHub Actions workflow YAML files, which coordinate the other platform repos via...</p></article>
+    </section>
+
+    <p class="footer">Generated from the root README. Existing markdown remains unchanged as the canonical detailed reference.</p>
   </main>
 </body>
 </html>
