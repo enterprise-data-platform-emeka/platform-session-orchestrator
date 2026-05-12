@@ -136,30 +136,67 @@
 
     <section class="diagram-card" id="architecture">
       <header>
-        <div class="eyebrow">End-to-end architecture</div>
-        <h2>Where this repo sits in the full platform</h2>
+        <div class="eyebrow">Session control plane</div>
+        <h2>How a temporary platform session starts, runs, and shuts down</h2>
       </header>
       
-      <svg viewBox="0 0 1230 500" role="img" aria-label="End-to-end Enterprise Data Platform architecture">
+      <svg viewBox="0 0 1230 520" role="img" aria-label="Session orchestrator lifecycle architecture">
         <defs>
           <marker id="arrow-dark" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
           <marker id="arrow-accent" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#2563eb"/></marker>
         </defs>
-        <rect x="0" y="0" width="1230" height="500" rx="28" fill="#f8fbff"/>
-        <text x="40" y="44" class="diagram-heading">Complete platform path</text>
-        <text x="40" y="70" class="diagram-subtitle">Source changes become trusted Gold marts, then three stakeholder frontends use the same governed analytics backend.</text>
-        <g><rect class="arch-node" x="55" y="84" width="130" height="68" rx="16"/><text x="120" y="114" text-anchor="middle" class="node-title">PostgreSQL</text><text x="120" y="134" text-anchor="middle" class="node-sub">Source OLTP</text></g><g><rect class="arch-node" x="220" y="84" width="130" height="68" rx="16"/><text x="285" y="114" text-anchor="middle" class="node-title">DMS CDC</text><text x="285" y="134" text-anchor="middle" class="node-sub">Change capture</text></g><g><rect class="arch-node" x="385" y="84" width="130" height="68" rx="16"/><text x="450" y="114" text-anchor="middle" class="node-title">Bronze S3</text><text x="450" y="134" text-anchor="middle" class="node-sub">Raw events</text></g><g><rect class="arch-node" x="550" y="84" width="130" height="68" rx="16"/><text x="615" y="114" text-anchor="middle" class="node-title">Glue PySpark</text><text x="615" y="134" text-anchor="middle" class="node-sub">Clean + reconcile</text></g><g><rect class="arch-node" x="715" y="84" width="130" height="68" rx="16"/><text x="780" y="114" text-anchor="middle" class="node-title">Silver S3</text><text x="780" y="134" text-anchor="middle" class="node-sub">Star schema</text></g><g><rect class="arch-node" x="880" y="84" width="130" height="68" rx="16"/><text x="945" y="114" text-anchor="middle" class="node-title">dbt / Athena</text><text x="945" y="134" text-anchor="middle" class="node-sub">Gold models</text></g><g><rect class="arch-node" x="1045" y="84" width="130" height="68" rx="16"/><text x="1110" y="114" text-anchor="middle" class="node-title">Gold S3</text><text x="1110" y="134" text-anchor="middle" class="node-sub">Business marts</text></g><g><rect class="arch-node" x="545" y="260" width="130" height="68" rx="16"/><text x="610" y="290" text-anchor="middle" class="node-title">FastAPI Agent</text><text x="610" y="310" text-anchor="middle" class="node-sub">SQL + guardrails</text></g><g><rect class="arch-node" x="280" y="390" width="130" height="68" rx="16"/><text x="345" y="420" text-anchor="middle" class="node-title">Streamlit UI</text><text x="345" y="440" text-anchor="middle" class="node-sub">Current UI</text></g><g><rect class="arch-node" x="545" y="390" width="130" height="68" rx="16"/><text x="610" y="420" text-anchor="middle" class="node-title">HTML Dashboard</text><text x="610" y="440" text-anchor="middle" class="node-sub">Custom UI</text></g><g><rect class="arch-node" x="810" y="390" width="130" height="68" rx="16"/><text x="875" y="420" text-anchor="middle" class="node-title">Slack MCP</text><text x="875" y="440" text-anchor="middle" class="node-sub">Chat entry</text></g>
-        <g class="flow-arrow"><path class="hit" d="M185 118 L220 118"/><path class="line" d="M185 118 L220 118"/></g><g class="flow-arrow"><path class="hit" d="M350 118 L385 118"/><path class="line" d="M350 118 L385 118"/></g><g class="flow-arrow"><path class="hit" d="M515 118 L550 118"/><path class="line" d="M515 118 L550 118"/></g><g class="flow-arrow"><path class="hit" d="M680 118 L715 118"/><path class="line" d="M680 118 L715 118"/></g><g class="flow-arrow"><path class="hit" d="M845 118 L880 118"/><path class="line" d="M845 118 L880 118"/></g><g class="flow-arrow"><path class="hit" d="M1010 118 L1045 118"/><path class="line" d="M1010 118 L1045 118"/></g><g class="flow-arrow"><path class="hit" d="M1110 152 L610 260"/><path class="line" d="M1110 152 L610 260"/></g><g class="flow-arrow"><path class="hit" d="M545 328 L345 390"/><path class="line" d="M545 328 L345 390"/></g><g class="flow-arrow"><path class="hit" d="M610 328 L610 390"/><path class="line" d="M610 328 L610 390"/></g><g class="flow-arrow"><path class="hit" d="M675 328 L875 390"/><path class="line" d="M675 328 L875 390"/></g><g class="flow-arrow"><path class="hit" d="M345 390 L545 328"/><path class="line" d="M345 390 L545 328"/></g><g class="flow-arrow"><path class="hit" d="M610 390 L610 328"/><path class="line" d="M610 390 L610 328"/></g><g class="flow-arrow"><path class="hit" d="M875 390 L675 328"/><path class="line" d="M875 390 L675 328"/></g>
-        <rect x="498" y="224" width="228" height="132" rx="24" fill="rgba(37,99,235,0.06)" stroke="#bfdbfe"/>
-        <text x="612" y="242" text-anchor="middle" class="layer-label">Analytics serving layer</text>
-        <rect x="238" y="362" width="780" height="92" rx="24" fill="rgba(15,118,110,0.05)" stroke="#ccfbf1"/>
-        <text x="628" y="478" text-anchor="middle" class="layer-label">Frontends: Streamlit, custom HTML, and Slack all converge on FastAPI</text>
+        <rect x="0" y="0" width="1230" height="520" rx="28" fill="#f8fbff"/>
+        <text x="40" y="44" class="diagram-heading">Session lifecycle</text>
+        <text x="40" y="70" class="diagram-subtitle">This repo coordinates existing repositories. It does not own the data transformations or frontend application code.</text>
+
+        <rect x="50" y="118" width="150" height="92" rx="20" fill="rgba(37,99,235,.08)" stroke="#bfdbfe"/>
+        <text x="125" y="154" text-anchor="middle" class="node-title">Operator</text>
+        <text x="125" y="176" text-anchor="middle" class="node-sub">chooses session</text>
+
+        <rect x="260" y="118" width="170" height="92" rx="20" fill="#fff" stroke="#bfdbfe"/>
+        <text x="345" y="148" text-anchor="middle" class="node-title">Session Start</text>
+        <text x="345" y="170" text-anchor="middle" class="node-sub">GitHub workflow</text>
+        <text x="345" y="190" text-anchor="middle" class="node-sub">sets run mode</text>
+
+        <rect x="500" y="72" width="190" height="88" rx="20" fill="rgba(37,99,235,.08)" stroke="#bfdbfe"/>
+        <text x="595" y="106" text-anchor="middle" class="node-title">Apply infrastructure</text>
+        <text x="595" y="128" text-anchor="middle" class="node-sub">Terraform dev stack</text>
+
+        <rect x="500" y="210" width="190" height="88" rx="20" fill="rgba(15,118,110,.08)" stroke="#99f6e4"/>
+        <text x="595" y="244" text-anchor="middle" class="node-title">Run data pipeline</text>
+        <text x="595" y="266" text-anchor="middle" class="node-sub">Step Functions or MWAA</text>
+
+        <rect x="760" y="118" width="190" height="92" rx="20" fill="rgba(85,107,47,.08)" stroke="#d9e7bd"/>
+        <text x="855" y="150" text-anchor="middle" class="node-title">Deploy apps</text>
+        <text x="855" y="172" text-anchor="middle" class="node-sub">agent, web, Slack</text>
+        <text x="855" y="192" text-anchor="middle" class="node-sub">as selected</text>
+
+        <rect x="1010" y="118" width="160" height="92" rx="20" fill="#fff" stroke="#bfdbfe"/>
+        <text x="1090" y="150" text-anchor="middle" class="node-title">Active session</text>
+        <text x="1090" y="172" text-anchor="middle" class="node-sub">demo or testing</text>
+
+        <rect x="760" y="340" width="190" height="92" rx="20" fill="rgba(180,35,24,.06)" stroke="#fecaca"/>
+        <text x="855" y="372" text-anchor="middle" class="node-title">Session Destroy</text>
+        <text x="855" y="394" text-anchor="middle" class="node-sub">stop paid compute</text>
+
+        <rect x="1010" y="340" width="160" height="92" rx="20" fill="rgba(15,118,110,.08)" stroke="#99f6e4"/>
+        <text x="1090" y="372" text-anchor="middle" class="node-title">S3 preserved</text>
+        <text x="1090" y="394" text-anchor="middle" class="node-sub">state and data remain</text>
+
+        <g class="flow-arrow"><path class="hit" d="M200 164 H260"/><path class="line" d="M200 164 H260"/></g>
+        <g class="flow-arrow"><path class="hit" d="M430 150 H500"/><path class="line" d="M430 150 H500"/><text x="466" y="138" text-anchor="middle">infra</text></g>
+        <g class="flow-arrow"><path class="hit" d="M430 178 H470 V254 H500"/><path class="line" d="M430 178 H470 V254 H500"/><text x="454" y="238" text-anchor="middle">data</text></g>
+        <g class="flow-arrow"><path class="hit" d="M690 116 H724 V164 H760"/><path class="line" d="M690 116 H724 V164 H760"/></g>
+        <g class="flow-arrow"><path class="hit" d="M690 254 H724 V164 H760"/><path class="line" d="M690 254 H724 V164 H760"/></g>
+        <g class="flow-arrow"><path class="hit" d="M950 164 H1010"/><path class="line" d="M950 164 H1010"/></g>
+        <g class="flow-arrow"><path class="hit" d="M1090 210 V386 H950"/><path class="line" d="M1090 210 V386 H950"/><text x="1018" y="374" text-anchor="middle">end session</text></g>
+        <g class="flow-arrow"><path class="hit" d="M950 386 H1010"/><path class="line" d="M950 386 H1010"/></g>
       </svg>
     
       <div class="explain">
-        <div><strong>Data pipeline</strong><span>PostgreSQL changes are captured by DMS, stored in Bronze, cleaned by Glue, modeled by dbt, and exposed as Gold marts.</span></div>
-        <div><strong>Serving layer</strong><span>The analytics agent queries Gold data through Athena and returns governed answers with SQL, cost, and audit evidence.</span></div>
-        <div><strong>Frontends</strong><span>Streamlit, custom HTML, and Slack/MCP are separate user entry points that share the same backend contract.</span></div>
+        <div><strong>Control boundary</strong><span>The orchestrator starts workflows in other repos and gives them the environment values they need.</span></div>
+        <div><strong>Two operating paths</strong><span>Short sessions can run the default Step Functions path; Airflow sessions can run MWAA for visual DAG demonstrations.</span></div>
+        <div><strong>Cost control</strong><span>Destroy removes paid compute while keeping durable S3 state, data, and artifacts available for the next session.</span></div>
       </div>
     </section>
 
@@ -212,7 +249,7 @@
     </section>
 
     <section id="concepts">
-      <div class="eyebrow">Beginner-friendly concept map</div>
+      <div class="eyebrow">Core concept map</div>
       <h2>Key ideas to understand</h2>
       <div class="concept-grid">
           <article class="concept-card">
