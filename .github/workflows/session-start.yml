@@ -140,7 +140,9 @@ jobs:
           terraform_wrapper: false
 
       - name: Mask AWS account ID in logs
-        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
+        env:
+          ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: echo "::add-mask::${ACCOUNT_ID}"
 
       - name: Configure AWS credentials (OIDC)
         env:
@@ -313,7 +315,9 @@ jobs:
           token: ${{ secrets.GH_PAT }}
 
       - name: Mask AWS account ID in logs
-        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
+        env:
+          ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: echo "::add-mask::${ACCOUNT_ID}"
 
       - name: Configure AWS credentials (OIDC)
         if: ${{ inputs.run_cdc_simulator }}
@@ -578,7 +582,9 @@ jobs:
           token: ${{ secrets.GH_PAT }}
 
       - name: Mask AWS account ID in logs
-        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
+        env:
+          ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: echo "::add-mask::${ACCOUNT_ID}"
 
       - name: Configure AWS credentials (OIDC)
         env:
@@ -701,7 +707,9 @@ jobs:
           token: ${{ secrets.GH_PAT }}
 
       - name: Mask AWS account ID in logs
-        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
+        env:
+          ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: echo "::add-mask::${ACCOUNT_ID}"
 
       - name: Configure AWS credentials (OIDC)
         env:
@@ -732,20 +740,15 @@ jobs:
             echo "AWS_DEFAULT_REGION=${AWS_REGION_VALUE}"
           } >> "$GITHUB_ENV"
           echo "AWS credentials configured via OIDC."
-      - name: Set dbt S3 destination
-        id: dbt-dest
-        env:
-          ACCOUNT_ID: ${{ needs.terraform-apply.outputs.account_id }}
-        run: |
-          if [ "${{ inputs.orchestrator }}" = "step-functions" ]; then
-            echo "bucket=edp-${{ env.ENV }}-${ACCOUNT_ID}-bronze" >> "$GITHUB_OUTPUT"
-          else
-            echo "bucket=edp-${{ env.ENV }}-${ACCOUNT_ID}-mwaa-dags" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Sync dbt project to S3
         run: |
-          aws s3 sync . "s3://${{ steps.dbt-dest.outputs.bucket }}/dbt/platform-dbt-analytics/" \
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          if [ "${{ inputs.orchestrator }}" = "step-functions" ]; then
+            BUCKET="edp-${{ env.ENV }}-${ACCOUNT_ID}-bronze"
+          else
+            BUCKET="edp-${{ env.ENV }}-${ACCOUNT_ID}-mwaa-dags"
+          fi
+          aws s3 sync . "s3://${BUCKET}/dbt/platform-dbt-analytics/" \
             --only-show-errors \
             --delete \
             --exclude ".git/*" \
@@ -783,7 +786,9 @@ jobs:
           token: ${{ secrets.GH_PAT }}
 
       - name: Mask AWS account ID in logs
-        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
+        env:
+          ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: echo "::add-mask::${ACCOUNT_ID}"
 
       - name: Configure AWS credentials (OIDC)
         env:
@@ -856,7 +861,9 @@ jobs:
 
     steps:
       - name: Mask AWS account ID in logs
-        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
+        env:
+          ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: echo "::add-mask::${ACCOUNT_ID}"
 
       - name: Configure AWS credentials (OIDC)
         env:
@@ -964,7 +971,9 @@ jobs:
 
     steps:
       - name: Mask AWS account ID in logs
-        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
+        env:
+          ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: echo "::add-mask::${ACCOUNT_ID}"
 
       - name: Configure AWS credentials (OIDC)
         env:
@@ -1218,7 +1227,9 @@ jobs:
           token: ${{ secrets.GH_PAT }}
 
       - name: Mask AWS account ID in logs
-        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
+        env:
+          ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: echo "::add-mask::${ACCOUNT_ID}"
 
       - name: Configure AWS credentials (OIDC)
         env:
@@ -1334,7 +1345,9 @@ jobs:
           token: ${{ secrets.GH_PAT }}
 
       - name: Mask AWS account ID in logs
-        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
+        env:
+          ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: echo "::add-mask::${ACCOUNT_ID}"
 
       - name: Configure AWS credentials (OIDC)
         if: ${{ inputs.deploy_slack_mcp }}
@@ -1485,7 +1498,9 @@ jobs:
           token: ${{ secrets.GH_PAT }}
 
       - name: Mask AWS account ID in logs
-        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
+        env:
+          ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: echo "::add-mask::${ACCOUNT_ID}"
 
       - name: Configure AWS credentials (OIDC)
         if: ${{ inputs.deploy_analytics_web }}
