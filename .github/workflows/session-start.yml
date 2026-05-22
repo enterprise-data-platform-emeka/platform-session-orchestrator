@@ -322,7 +322,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         if: ${{ inputs.run_cdc_simulator }}
         env:
-          ROLE_ARN: arn:aws:iam::${{ needs.terraform-apply.outputs.account_id }}:role/edp-${{ env.ENV }}-github-actions-role
+          ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
           AWS_REGION_VALUE: ${{ env.AWS_REGION }}
         run: |
           echo "::add-mask::${ROLE_ARN}"
@@ -494,7 +494,7 @@ jobs:
       - name: Wait for seeded Bronze data in S3
         if: ${{ inputs.run_cdc_simulator }}
         env:
-          ACCOUNT_ID: ${{ needs.terraform-apply.outputs.account_id }}
+          ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
         run: |
           BUCKET="edp-${ENV}-${ACCOUNT_ID}-bronze"
           TABLES="customers products orders order_items payments shipments"
@@ -833,7 +833,7 @@ jobs:
 
       - name: Upload dags/ to S3
         env:
-          MWAA_BUCKET: edp-${{ env.ENV }}-${{ needs.terraform-apply.outputs.account_id }}-mwaa-dags
+          MWAA_BUCKET: edp-${{ env.ENV }}-${{ vars.AWS_ACCOUNT_ID }}-mwaa-dags
         run: |
           aws s3 sync dags/ "s3://${MWAA_BUCKET}/dags/" \
             --only-show-errors \
@@ -897,7 +897,7 @@ jobs:
       - name: Start Step Functions execution
         id: start-execution
         env:
-          ACCOUNT_ID: ${{ needs.terraform-apply.outputs.account_id || vars.AWS_ACCOUNT_ID }}
+          ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
         run: |
           STATE_MACHINE_ARN="arn:aws:states:${AWS_REGION}:${ACCOUNT_ID}:stateMachine:edp-${ENV}-pipeline"
           echo "Starting Step Functions pipeline execution."
@@ -1352,7 +1352,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         if: ${{ inputs.deploy_slack_mcp }}
         env:
-          ROLE_ARN: arn:aws:iam::${{ needs.terraform-apply.outputs.account_id }}:role/edp-${{ env.ENV }}-github-actions-role
+          ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
           AWS_REGION_VALUE: ${{ env.AWS_REGION }}
         run: |
           echo "::add-mask::${ROLE_ARN}"
@@ -1505,7 +1505,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         if: ${{ inputs.deploy_analytics_web }}
         env:
-          ROLE_ARN: arn:aws:iam::${{ needs.terraform-apply.outputs.account_id }}:role/edp-${{ env.ENV }}-github-actions-role
+          ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
           AWS_REGION_VALUE: ${{ env.AWS_REGION }}
         run: |
           echo "::add-mask::${ROLE_ARN}"
