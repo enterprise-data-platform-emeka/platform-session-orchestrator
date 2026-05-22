@@ -1625,7 +1625,7 @@ jobs:
         run: |
           STREAMLIT_URL="http://${AGENT_HOST}:8501"
           FASTAPI_URL="http://${AGENT_HOST}:80"
-          DASHBOARD_URL="http://${WEB_HOST}:3000"
+          DASHBOARD_URL="${WEB_HOST}"
           echo ""
           echo "================================================"
           echo "  SESSION IS READY"
