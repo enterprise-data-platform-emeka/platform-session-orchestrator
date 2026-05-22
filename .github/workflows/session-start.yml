@@ -40,6 +40,12 @@ name: Session Start
 #     SLACK_BOT_TOKEN — Slack bot OAuth token (xoxb-...), used when deploy_slack_mcp=true
 #   Variables (per Environment: dev / staging / prod):
 #     AWS_ACCOUNT_ID  — 12-digit AWS account ID (not sensitive, used in resource names)
+#     CLAUDE_PROVIDER — optional rollback switch. Defaults to aws_claude_platform.
+#
+# Claude Platform on AWS:
+#   The workflow does not pass a Claude API key to Terraform. The Analytics
+#   Agent reads its Claude workspace ID from SSM Parameter Store at
+#   /edp/{env}/claude/workspace_id. That value is not printed in this workflow.
 
 on:
   workflow_dispatch:
@@ -116,6 +122,9 @@ jobs:
     env:
       ENV:        ${{ inputs.env }}
       AWS_REGION: eu-central-1
+      # Default session applies use Claude Platform on AWS. Override with an
+      # environment variable named CLAUDE_PROVIDER only if rolling back.
+      TF_VAR_claude_provider: ${{ vars.CLAUDE_PROVIDER || 'aws_claude_platform' }}
 
     steps:
       - name: Checkout terraform-platform-infra-live
@@ -201,7 +210,31 @@ jobs:
             export TF_VAR_enable_analytics_web=false
             echo "Analytics web dashboard infrastructure disabled for this session."
           fi
-          terraform apply -auto-approve
+          set +e
+          terraform plan -no-color -input=false -out=tfplan > /tmp/session-plan.txt 2>&1
+          PLAN_STATUS=$?
+          set -e
+          if [ "${PLAN_STATUS}" -ne 0 ]; then
+            echo "Terraform plan failed. Filtered diagnostics:"
+            grep -E '^\s*(Error:|Warning:|Plan:|No changes|#\s+\w|  #)' /tmp/session-plan.txt | head -120 || true
+            exit "${PLAN_STATUS}"
+          fi
+
+          echo "Terraform plan completed. Filtered summary:"
+          grep -E '^\s*(Plan:|No changes|#\s+\w)' /tmp/session-plan.txt | head -120 || true
+
+          set +e
+          terraform apply -auto-approve -input=false -no-color tfplan > /tmp/session-apply.txt 2>&1
+          APPLY_STATUS=$?
+          set -e
+          if [ "${APPLY_STATUS}" -ne 0 ]; then
+            echo "Terraform apply failed. Filtered diagnostics:"
+            grep -E '^\s*(Error:|Warning:|Plan:|Apply complete|No changes|#\s+\w|  #)' /tmp/session-apply.txt | head -120 || true
+            exit "${APPLY_STATUS}"
+          fi
+
+          echo "Terraform apply completed. Filtered summary:"
+          grep -E '^\s*(Apply complete|No changes|Plan:)' /tmp/session-apply.txt | head -40 || true
 
       - name: Capture Terraform outputs
         id: tf-outputs

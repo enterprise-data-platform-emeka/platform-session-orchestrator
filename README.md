@@ -187,6 +187,7 @@ All secrets are scoped per GitHub Environment (Settings > Environments > {env}).
 | Variable | Description |
 |---|---|
 | `AWS_ACCOUNT_ID` | 12-digit AWS account ID for the environment |
+| `CLAUDE_PROVIDER` | Optional rollback switch. Omit it for Claude Platform on AWS, or set `anthropic_api_key` only if rolling back. |
 
 **SSM (Systems Manager) parameters** (set once per environment via AWS CLI):
 
@@ -194,10 +195,24 @@ All secrets are scoped per GitHub Environment (Settings > Environments > {env}).
 aws ssm put-parameter \
   --name "/edp/{env}/anthropic_api_key" \
   --type "SecureString" \
-  --value "YOUR_KEY" \
+  --value "<anthropic-api-key>" \
   --profile {env}-admin \
   --region eu-central-1
 ```
+
+Claude Platform on AWS is the default for new sessions. Store the workspace ID in SSM, not in GitHub variables or workflow inputs:
+
+```bash
+aws ssm put-parameter \
+  --name "/edp/{env}/claude/workspace_id" \
+  --type "String" \
+  --value "<workspace-id>" \
+  --overwrite \
+  --profile {env}-admin \
+  --region eu-central-1
+```
+
+The session workflow sets `TF_VAR_claude_provider=aws_claude_platform` by default and does not print the workspace ID or secret values in Terraform logs.
 
 ---
 
