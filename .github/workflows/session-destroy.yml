@@ -72,7 +72,9 @@ jobs:
           terraform_version: "~1.6"
 
       - name: Mask AWS account ID in logs
-        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
+        env:
+          ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: echo "::add-mask::${ACCOUNT_ID}"
 
       - name: Configure AWS credentials (OIDC)
         env:
