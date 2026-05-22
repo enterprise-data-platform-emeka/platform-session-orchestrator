@@ -1620,9 +1620,12 @@ jobs:
           SERVING_LAYER:        ${{ inputs.serving_layer }}
           DEPLOY_SLACK_MCP:     ${{ inputs.deploy_slack_mcp }}
           DEPLOY_ANALYTICS_WEB: ${{ inputs.deploy_analytics_web }}
-          ALB_DNS:              ${{ needs.terraform-apply.outputs.alb_dns }}
-          ANALYTICS_WEB_URL:    ${{ needs.terraform-apply.outputs.analytics_web_url }}
+          AGENT_HOST:           ${{ needs.terraform-apply.outputs.alb_dns }}
+          WEB_HOST:             ${{ needs.terraform-apply.outputs.analytics_web_url }}
         run: |
+          STREAMLIT_URL="http://${AGENT_HOST}:8501"
+          FASTAPI_URL="http://${AGENT_HOST}:80"
+          DASHBOARD_URL="http://${WEB_HOST}:3000"
           echo ""
           echo "================================================"
           echo "  SESSION IS READY"
@@ -1632,11 +1635,11 @@ jobs:
           echo "  Orchestrator : ${ORCHESTRATOR}"
           echo "  Serving layer: ${SERVING_LAYER}"
           echo ""
-          echo "  Streamlit UI  : http://${ALB_DNS}:8501"
-          echo "  FastAPI       : http://${ALB_DNS}:80"
+          echo "  Streamlit UI  : ${STREAMLIT_URL}"
+          echo "  FastAPI       : ${FASTAPI_URL}"
           echo ""
-          if [ "${DEPLOY_ANALYTICS_WEB}" = "true" ] && [ -n "${ANALYTICS_WEB_URL}" ]; then
-            echo "  Analytics Web : http://${ANALYTICS_WEB_URL}:3000"
+          if [ "${DEPLOY_ANALYTICS_WEB}" = "true" ] && [ -n "${WEB_HOST}" ]; then
+            echo "  Analytics Web : ${DASHBOARD_URL}"
             echo ""
           fi
           if [ "${DEPLOY_SLACK_MCP}" = "true" ]; then
