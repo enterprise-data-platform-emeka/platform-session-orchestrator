@@ -73,12 +73,12 @@ jobs:
 
       - name: Mask AWS account ID in logs
         env:
-          ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: echo "::add-mask::${ACCOUNT_ID}"
 
       - name: Configure AWS credentials (OIDC)
         env:
-          ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          ROLE_ARN: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
           AWS_REGION_VALUE: ${{ env.AWS_REGION }}
         run: |
           echo "::add-mask::${ROLE_ARN}"
