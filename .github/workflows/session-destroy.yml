@@ -71,12 +71,38 @@ jobs:
         with:
           terraform_version: "~1.6"
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
-          aws-region: ${{ env.AWS_REGION }}
+      - name: Mask AWS account ID in logs
+        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
 
+      - name: Configure AWS credentials (OIDC)
+        env:
+          ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          AWS_REGION_VALUE: ${{ env.AWS_REGION }}
+        run: |
+          echo "::add-mask::${ROLE_ARN}"
+          OIDC_TOKEN_JSON=$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          OIDC_TOKEN=$(printf '%s' "${OIDC_TOKEN_JSON}" | jq -r '.value')
+          CREDS=$(aws sts assume-role-with-web-identity \
+            --role-arn "${ROLE_ARN}" \
+            --role-session-name "github-actions" \
+            --web-identity-token "${OIDC_TOKEN}" \
+            --duration-seconds 3600 \
+            --query Credentials \
+            --output json)
+          AWS_ACCESS_KEY_ID=$(printf '%s' "${CREDS}" | jq -r '.AccessKeyId')
+          AWS_SECRET_ACCESS_KEY=$(printf '%s' "${CREDS}" | jq -r '.SecretAccessKey')
+          AWS_SESSION_TOKEN=$(printf '%s' "${CREDS}" | jq -r '.SessionToken')
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
+          {
+            echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+            echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+            echo "AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}"
+            echo "AWS_REGION=${AWS_REGION_VALUE}"
+            echo "AWS_DEFAULT_REGION=${AWS_REGION_VALUE}"
+          } >> "$GITHUB_ENV"
+          echo "AWS credentials configured via OIDC."
       - name: Terraform init
         run: |
           cd environments/${{ env.ENV }}
