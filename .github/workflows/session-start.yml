@@ -1615,12 +1615,17 @@ jobs:
     steps:
       - name: Print session summary
         env:
-          ENV:          ${{ inputs.env }}
-          ORCHESTRATOR: ${{ inputs.orchestrator }}
-          SERVING_LAYER: ${{ inputs.serving_layer }}
-          DEPLOY_SLACK_MCP: ${{ inputs.deploy_slack_mcp }}
+          ENV:                  ${{ inputs.env }}
+          ORCHESTRATOR:         ${{ inputs.orchestrator }}
+          SERVING_LAYER:        ${{ inputs.serving_layer }}
+          DEPLOY_SLACK_MCP:     ${{ inputs.deploy_slack_mcp }}
           DEPLOY_ANALYTICS_WEB: ${{ inputs.deploy_analytics_web }}
+          AGENT_HOST:           ${{ needs.terraform-apply.outputs.alb_dns }}
+          WEB_HOST:             ${{ needs.terraform-apply.outputs.analytics_web_url }}
         run: |
+          STREAMLIT_URL="http://${AGENT_HOST}:8501"
+          FASTAPI_URL="http://${AGENT_HOST}:80"
+          DASHBOARD_URL="http://${WEB_HOST}:3000"
           echo ""
           echo "================================================"
           echo "  SESSION IS READY"
@@ -1630,20 +1635,15 @@ jobs:
           echo "  Orchestrator : ${ORCHESTRATOR}"
           echo "  Serving layer: ${SERVING_LAYER}"
           echo ""
-          echo "  Streamlit UI:"
-          echo "    Ready. Read the analytics agent ALB DNS from Terraform output or the AWS console."
+          echo "  Streamlit UI  : ${STREAMLIT_URL}"
+          echo "  FastAPI       : ${FASTAPI_URL}"
           echo ""
-          if [ "${DEPLOY_ANALYTICS_WEB}" = "true" ]; then
-            echo "  Custom HTML Analytics UI:"
-            echo "    Ready. Read the dashboard URL from Terraform output or the AWS console."
+          if [ "${DEPLOY_ANALYTICS_WEB}" = "true" ] && [ -n "${WEB_HOST}" ]; then
+            echo "  Analytics Web : ${DASHBOARD_URL}"
             echo ""
           fi
-          echo "  FastAPI:"
-          echo "    Ready behind the analytics agent Application Load Balancer."
-          echo ""
           if [ "${DEPLOY_SLACK_MCP}" = "true" ]; then
-            echo "  Slack MCP Gateway:"
-            echo "    Deployed. Ask @EDP Analytics Agent in #analytics-agent-demo."
+            echo "  Slack MCP Gateway: Deployed. Ask @EDP Analytics Agent in #analytics-agent-demo."
             echo ""
           fi
           echo "  When done: run the Session Destroy workflow."
