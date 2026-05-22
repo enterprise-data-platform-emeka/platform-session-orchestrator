@@ -139,12 +139,38 @@ jobs:
           terraform_version: "~1.6"
           terraform_wrapper: false
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
-          aws-region: ${{ env.AWS_REGION }}
+      - name: Mask AWS account ID in logs
+        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
 
+      - name: Configure AWS credentials (OIDC)
+        env:
+          ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          AWS_REGION_VALUE: ${{ env.AWS_REGION }}
+        run: |
+          echo "::add-mask::${ROLE_ARN}"
+          OIDC_TOKEN_JSON=$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          OIDC_TOKEN=$(printf '%s' "${OIDC_TOKEN_JSON}" | jq -r '.value')
+          CREDS=$(aws sts assume-role-with-web-identity \
+            --role-arn "${ROLE_ARN}" \
+            --role-session-name "github-actions" \
+            --web-identity-token "${OIDC_TOKEN}" \
+            --duration-seconds 3600 \
+            --query Credentials \
+            --output json)
+          AWS_ACCESS_KEY_ID=$(printf '%s' "${CREDS}" | jq -r '.AccessKeyId')
+          AWS_SECRET_ACCESS_KEY=$(printf '%s' "${CREDS}" | jq -r '.SecretAccessKey')
+          AWS_SESSION_TOKEN=$(printf '%s' "${CREDS}" | jq -r '.SessionToken')
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
+          {
+            echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+            echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+            echo "AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}"
+            echo "AWS_REGION=${AWS_REGION_VALUE}"
+            echo "AWS_DEFAULT_REGION=${AWS_REGION_VALUE}"
+          } >> "$GITHUB_ENV"
+          echo "AWS credentials configured via OIDC."
       - name: Resolve AWS account ID
         id: account
         run: echo "id=$(aws sts get-caller-identity --query Account --output text)" >> "$GITHUB_OUTPUT"
@@ -286,33 +312,68 @@ jobs:
           repository: enterprise-data-platform-emeka/platform-cdc-simulator
           token: ${{ secrets.GH_PAT }}
 
+      - name: Mask AWS account ID in logs
+        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
+
       - name: Configure AWS credentials (OIDC)
         if: ${{ inputs.run_cdc_simulator }}
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ needs.terraform-apply.outputs.account_id }}:role/edp-${{ env.ENV }}-github-actions-role
-          aws-region: ${{ env.AWS_REGION }}
-
+        env:
+          ROLE_ARN: arn:aws:iam::${{ needs.terraform-apply.outputs.account_id }}:role/edp-${{ env.ENV }}-github-actions-role
+          AWS_REGION_VALUE: ${{ env.AWS_REGION }}
+        run: |
+          echo "::add-mask::${ROLE_ARN}"
+          OIDC_TOKEN_JSON=$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          OIDC_TOKEN=$(printf '%s' "${OIDC_TOKEN_JSON}" | jq -r '.value')
+          CREDS=$(aws sts assume-role-with-web-identity \
+            --role-arn "${ROLE_ARN}" \
+            --role-session-name "github-actions" \
+            --web-identity-token "${OIDC_TOKEN}" \
+            --duration-seconds 3600 \
+            --query Credentials \
+            --output json)
+          AWS_ACCESS_KEY_ID=$(printf '%s' "${CREDS}" | jq -r '.AccessKeyId')
+          AWS_SECRET_ACCESS_KEY=$(printf '%s' "${CREDS}" | jq -r '.SecretAccessKey')
+          AWS_SESSION_TOKEN=$(printf '%s' "${CREDS}" | jq -r '.SessionToken')
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
+          {
+            echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+            echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+            echo "AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}"
+            echo "AWS_REGION=${AWS_REGION_VALUE}"
+            echo "AWS_DEFAULT_REGION=${AWS_REGION_VALUE}"
+          } >> "$GITHUB_ENV"
+          echo "AWS credentials configured via OIDC."
       - name: Log in to Amazon ECR
         if: ${{ inputs.run_cdc_simulator }}
-        id: login-ecr-cdc
-        uses: aws-actions/amazon-ecr-login@v2
+        run: |
+          ECR_REGISTRY="${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "::add-mask::${ECR_REGISTRY}"
+          aws ecr get-login-password --region "${AWS_REGION}" |
+            docker login --username AWS --password-stdin "${ECR_REGISTRY}" >/dev/null
+          echo "Logged in to Amazon ECR."
 
       - name: Build and push simulator image
         if: ${{ inputs.run_cdc_simulator }}
         id: build-cdc-image
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr-cdc.outputs.registry }}
           ECR_REPOSITORY: edp-${{ env.ENV }}-cdc-simulator
           IMAGE_TAG: sha-${{ github.sha }}
         run: |
+          ECR_REGISTRY="${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "::add-mask::${ECR_REGISTRY}"
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
-          docker build \
+          if ! docker build \
             -t "${IMAGE_URI}" \
             -t "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
-            .
-          docker push "${IMAGE_URI}"
-          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+            . >/tmp/docker-build.log 2>&1; then
+            echo "Docker build failed."
+            exit 1
+          fi
+          docker push "${IMAGE_URI}" >/dev/null
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" >/dev/null
+          echo "Container image pushed to ECR."
           echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
 
       - name: Register simulator task definition revision
@@ -348,7 +409,7 @@ jobs:
             --query taskDefinition.taskDefinitionArn \
             --output text)
           echo "task_definition=${REGISTERED_ARN}" >> "$GITHUB_OUTPUT"
-          echo "Registered ${REGISTERED_ARN}"
+          echo "Registered CDC simulator task definition revision."
 
       - name: Reboot RDS so logical replication parameters are active
         if: ${{ inputs.run_cdc_simulator }}
@@ -392,7 +453,7 @@ jobs:
             exit 1
           fi
 
-          echo "Started CDC bootstrap task ${TASK_ARN}"
+          echo "Started CDC bootstrap task."
           aws ecs wait tasks-stopped --cluster "${CLUSTER}" --tasks "${TASK_ARN}"
           EXIT_CODE=$(aws ecs describe-tasks \
             --cluster "${CLUSTER}" \
@@ -484,7 +545,7 @@ jobs:
             --query 'tasks[0].taskArn' \
             --output text)
 
-          echo "Started bounded live CDC injection task: ${TASK_ARN}"
+          echo "Started bounded live CDC injection task."
           echo "Workflow will continue while this task runs for ${DURATION_SECONDS}s."
 
 # ── Job 3: Upload Glue scripts to S3 (parallel after terraform-apply) ────────
@@ -516,12 +577,38 @@ jobs:
           repository: enterprise-data-platform-emeka/platform-glue-jobs
           token: ${{ secrets.GH_PAT }}
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
-          aws-region: ${{ env.AWS_REGION }}
+      - name: Mask AWS account ID in logs
+        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
 
+      - name: Configure AWS credentials (OIDC)
+        env:
+          ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          AWS_REGION_VALUE: ${{ env.AWS_REGION }}
+        run: |
+          echo "::add-mask::${ROLE_ARN}"
+          OIDC_TOKEN_JSON=$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          OIDC_TOKEN=$(printf '%s' "${OIDC_TOKEN_JSON}" | jq -r '.value')
+          CREDS=$(aws sts assume-role-with-web-identity \
+            --role-arn "${ROLE_ARN}" \
+            --role-session-name "github-actions" \
+            --web-identity-token "${OIDC_TOKEN}" \
+            --duration-seconds 3600 \
+            --query Credentials \
+            --output json)
+          AWS_ACCESS_KEY_ID=$(printf '%s' "${CREDS}" | jq -r '.AccessKeyId')
+          AWS_SECRET_ACCESS_KEY=$(printf '%s' "${CREDS}" | jq -r '.SecretAccessKey')
+          AWS_SESSION_TOKEN=$(printf '%s' "${CREDS}" | jq -r '.SessionToken')
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
+          {
+            echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+            echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+            echo "AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}"
+            echo "AWS_REGION=${AWS_REGION_VALUE}"
+            echo "AWS_DEFAULT_REGION=${AWS_REGION_VALUE}"
+          } >> "$GITHUB_ENV"
+          echo "AWS credentials configured via OIDC."
       - name: Resolve AWS account ID
         id: account
         run: echo "id=$(aws sts get-caller-identity --query Account --output text)" >> "$GITHUB_OUTPUT"
@@ -534,9 +621,10 @@ jobs:
           SCRIPTS_BUCKET: edp-${{ env.ENV }}-${{ steps.account.outputs.id }}-glue-scripts
         run: |
           aws s3 sync jobs/ "s3://${SCRIPTS_BUCKET}/glue-scripts/" \
+            --only-show-errors \
             --exclude "*" --include "*.py"
-          aws s3 cp lib.zip "s3://${SCRIPTS_BUCKET}/glue-scripts/lib.zip"
-          echo "Glue scripts uploaded to s3://${SCRIPTS_BUCKET}/glue-scripts/"
+          aws s3 cp lib.zip "s3://${SCRIPTS_BUCKET}/glue-scripts/lib.zip" --only-show-errors
+          echo "Glue scripts uploaded to S3."
           aws s3 ls "s3://${SCRIPTS_BUCKET}/glue-scripts/"
 
       - name: Create or update Silver Glue job definitions
@@ -612,12 +700,38 @@ jobs:
           repository: enterprise-data-platform-emeka/platform-dbt-analytics
           token: ${{ secrets.GH_PAT }}
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
-          aws-region: ${{ env.AWS_REGION }}
+      - name: Mask AWS account ID in logs
+        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
 
+      - name: Configure AWS credentials (OIDC)
+        env:
+          ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          AWS_REGION_VALUE: ${{ env.AWS_REGION }}
+        run: |
+          echo "::add-mask::${ROLE_ARN}"
+          OIDC_TOKEN_JSON=$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          OIDC_TOKEN=$(printf '%s' "${OIDC_TOKEN_JSON}" | jq -r '.value')
+          CREDS=$(aws sts assume-role-with-web-identity \
+            --role-arn "${ROLE_ARN}" \
+            --role-session-name "github-actions" \
+            --web-identity-token "${OIDC_TOKEN}" \
+            --duration-seconds 3600 \
+            --query Credentials \
+            --output json)
+          AWS_ACCESS_KEY_ID=$(printf '%s' "${CREDS}" | jq -r '.AccessKeyId')
+          AWS_SECRET_ACCESS_KEY=$(printf '%s' "${CREDS}" | jq -r '.SecretAccessKey')
+          AWS_SESSION_TOKEN=$(printf '%s' "${CREDS}" | jq -r '.SessionToken')
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
+          {
+            echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+            echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+            echo "AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}"
+            echo "AWS_REGION=${AWS_REGION_VALUE}"
+            echo "AWS_DEFAULT_REGION=${AWS_REGION_VALUE}"
+          } >> "$GITHUB_ENV"
+          echo "AWS credentials configured via OIDC."
       - name: Set dbt S3 destination
         id: dbt-dest
         env:
@@ -632,6 +746,7 @@ jobs:
       - name: Sync dbt project to S3
         run: |
           aws s3 sync . "s3://${{ steps.dbt-dest.outputs.bucket }}/dbt/platform-dbt-analytics/" \
+            --only-show-errors \
             --delete \
             --exclude ".git/*" \
             --exclude ".github/*" \
@@ -640,7 +755,7 @@ jobs:
             --exclude "target/*" \
             --exclude "dbt_packages/*" \
             --exclude "logs/*"
-          echo "dbt project synced to s3://${{ steps.dbt-dest.outputs.bucket }}/dbt/platform-dbt-analytics/"
+          echo "dbt project synced to S3."
 
 # ── Job 4: Upload DAG to MWAA (MWAA only, parallel after terraform-apply) ────
 
@@ -667,12 +782,38 @@ jobs:
           repository: enterprise-data-platform-emeka/platform-orchestration-mwaa-airflow
           token: ${{ secrets.GH_PAT }}
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
-          aws-region: ${{ env.AWS_REGION }}
+      - name: Mask AWS account ID in logs
+        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
 
+      - name: Configure AWS credentials (OIDC)
+        env:
+          ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          AWS_REGION_VALUE: ${{ env.AWS_REGION }}
+        run: |
+          echo "::add-mask::${ROLE_ARN}"
+          OIDC_TOKEN_JSON=$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          OIDC_TOKEN=$(printf '%s' "${OIDC_TOKEN_JSON}" | jq -r '.value')
+          CREDS=$(aws sts assume-role-with-web-identity \
+            --role-arn "${ROLE_ARN}" \
+            --role-session-name "github-actions" \
+            --web-identity-token "${OIDC_TOKEN}" \
+            --duration-seconds 3600 \
+            --query Credentials \
+            --output json)
+          AWS_ACCESS_KEY_ID=$(printf '%s' "${CREDS}" | jq -r '.AccessKeyId')
+          AWS_SECRET_ACCESS_KEY=$(printf '%s' "${CREDS}" | jq -r '.SecretAccessKey')
+          AWS_SESSION_TOKEN=$(printf '%s' "${CREDS}" | jq -r '.SessionToken')
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
+          {
+            echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+            echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+            echo "AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}"
+            echo "AWS_REGION=${AWS_REGION_VALUE}"
+            echo "AWS_DEFAULT_REGION=${AWS_REGION_VALUE}"
+          } >> "$GITHUB_ENV"
+          echo "AWS credentials configured via OIDC."
       - name: Assert MWAA is AVAILABLE
         run: |
           STATUS=$(aws mwaa get-environment \
@@ -690,10 +831,11 @@ jobs:
           MWAA_BUCKET: edp-${{ env.ENV }}-${{ needs.terraform-apply.outputs.account_id }}-mwaa-dags
         run: |
           aws s3 sync dags/ "s3://${MWAA_BUCKET}/dags/" \
+            --only-show-errors \
             --delete \
             --exclude "__pycache__/*" \
             --exclude "*.pyc"
-          echo "DAGs uploaded to s3://${MWAA_BUCKET}/dags/"
+          echo "DAGs uploaded to S3."
 
 # ── Job 5: Trigger Step Functions pipeline and poll until completion ──────────
 
@@ -713,19 +855,45 @@ jobs:
       AWS_REGION: eu-central-1
 
     steps:
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
-          aws-region: ${{ env.AWS_REGION }}
+      - name: Mask AWS account ID in logs
+        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
 
+      - name: Configure AWS credentials (OIDC)
+        env:
+          ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          AWS_REGION_VALUE: ${{ env.AWS_REGION }}
+        run: |
+          echo "::add-mask::${ROLE_ARN}"
+          OIDC_TOKEN_JSON=$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          OIDC_TOKEN=$(printf '%s' "${OIDC_TOKEN_JSON}" | jq -r '.value')
+          CREDS=$(aws sts assume-role-with-web-identity \
+            --role-arn "${ROLE_ARN}" \
+            --role-session-name "github-actions" \
+            --web-identity-token "${OIDC_TOKEN}" \
+            --duration-seconds 3600 \
+            --query Credentials \
+            --output json)
+          AWS_ACCESS_KEY_ID=$(printf '%s' "${CREDS}" | jq -r '.AccessKeyId')
+          AWS_SECRET_ACCESS_KEY=$(printf '%s' "${CREDS}" | jq -r '.SecretAccessKey')
+          AWS_SESSION_TOKEN=$(printf '%s' "${CREDS}" | jq -r '.SessionToken')
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
+          {
+            echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+            echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+            echo "AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}"
+            echo "AWS_REGION=${AWS_REGION_VALUE}"
+            echo "AWS_DEFAULT_REGION=${AWS_REGION_VALUE}"
+          } >> "$GITHUB_ENV"
+          echo "AWS credentials configured via OIDC."
       - name: Start Step Functions execution
         id: start-execution
         env:
           ACCOUNT_ID: ${{ needs.terraform-apply.outputs.account_id || vars.AWS_ACCOUNT_ID }}
         run: |
           STATE_MACHINE_ARN="arn:aws:states:${AWS_REGION}:${ACCOUNT_ID}:stateMachine:edp-${ENV}-pipeline"
-          echo "Starting execution: ${STATE_MACHINE_ARN}"
+          echo "Starting Step Functions pipeline execution."
 
           EXECUTION_ARN=$(aws stepfunctions start-execution \
             --state-machine-arn "${STATE_MACHINE_ARN}" \
@@ -733,7 +901,7 @@ jobs:
             --output text)
 
           echo "execution_arn=${EXECUTION_ARN}" >> "$GITHUB_OUTPUT"
-          echo "Execution started: ${EXECUTION_ARN}"
+          echo "Step Functions execution started."
 
       - name: Poll until success or failure (timeout 30 min)
         run: |
@@ -795,12 +963,38 @@ jobs:
       MWAA_ENV_NAME: edp-${{ inputs.env }}-mwaa
 
     steps:
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
-          aws-region: ${{ env.AWS_REGION }}
+      - name: Mask AWS account ID in logs
+        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
 
+      - name: Configure AWS credentials (OIDC)
+        env:
+          ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          AWS_REGION_VALUE: ${{ env.AWS_REGION }}
+        run: |
+          echo "::add-mask::${ROLE_ARN}"
+          OIDC_TOKEN_JSON=$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          OIDC_TOKEN=$(printf '%s' "${OIDC_TOKEN_JSON}" | jq -r '.value')
+          CREDS=$(aws sts assume-role-with-web-identity \
+            --role-arn "${ROLE_ARN}" \
+            --role-session-name "github-actions" \
+            --web-identity-token "${OIDC_TOKEN}" \
+            --duration-seconds 3600 \
+            --query Credentials \
+            --output json)
+          AWS_ACCESS_KEY_ID=$(printf '%s' "${CREDS}" | jq -r '.AccessKeyId')
+          AWS_SECRET_ACCESS_KEY=$(printf '%s' "${CREDS}" | jq -r '.SecretAccessKey')
+          AWS_SESSION_TOKEN=$(printf '%s' "${CREDS}" | jq -r '.SessionToken')
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
+          {
+            echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+            echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+            echo "AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}"
+            echo "AWS_REGION=${AWS_REGION_VALUE}"
+            echo "AWS_DEFAULT_REGION=${AWS_REGION_VALUE}"
+          } >> "$GITHUB_ENV"
+          echo "AWS credentials configured via OIDC."
       - name: Wait for edp_pipeline DAG to be registered by scheduler
         run: |
           MAX_WAIT=18
@@ -1023,30 +1217,65 @@ jobs:
           repository: enterprise-data-platform-emeka/platform-analytics-agent
           token: ${{ secrets.GH_PAT }}
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
-          aws-region: ${{ env.AWS_REGION }}
+      - name: Mask AWS account ID in logs
+        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
 
+      - name: Configure AWS credentials (OIDC)
+        env:
+          ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          AWS_REGION_VALUE: ${{ env.AWS_REGION }}
+        run: |
+          echo "::add-mask::${ROLE_ARN}"
+          OIDC_TOKEN_JSON=$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          OIDC_TOKEN=$(printf '%s' "${OIDC_TOKEN_JSON}" | jq -r '.value')
+          CREDS=$(aws sts assume-role-with-web-identity \
+            --role-arn "${ROLE_ARN}" \
+            --role-session-name "github-actions" \
+            --web-identity-token "${OIDC_TOKEN}" \
+            --duration-seconds 3600 \
+            --query Credentials \
+            --output json)
+          AWS_ACCESS_KEY_ID=$(printf '%s' "${CREDS}" | jq -r '.AccessKeyId')
+          AWS_SECRET_ACCESS_KEY=$(printf '%s' "${CREDS}" | jq -r '.SecretAccessKey')
+          AWS_SESSION_TOKEN=$(printf '%s' "${CREDS}" | jq -r '.SessionToken')
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
+          {
+            echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+            echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+            echo "AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}"
+            echo "AWS_REGION=${AWS_REGION_VALUE}"
+            echo "AWS_DEFAULT_REGION=${AWS_REGION_VALUE}"
+          } >> "$GITHUB_ENV"
+          echo "AWS credentials configured via OIDC."
       - name: Log in to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        run: |
+          ECR_REGISTRY="${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "::add-mask::${ECR_REGISTRY}"
+          aws ecr get-login-password --region "${AWS_REGION}" |
+            docker login --username AWS --password-stdin "${ECR_REGISTRY}" >/dev/null
+          echo "Logged in to Amazon ECR."
 
       - name: Build, tag, and push image to ECR
         id: build-image
         env:
-          ECR_REGISTRY:   ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: edp-${{ env.ENV }}-analytics-agent
           IMAGE_TAG:      sha-${{ github.sha }}
         run: |
+          ECR_REGISTRY="${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "::add-mask::${ECR_REGISTRY}"
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
-          docker build --target runtime \
+          if ! docker build --target runtime \
             -t "${IMAGE_URI}" \
             -t "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
-            .
-          docker push "${IMAGE_URI}"
-          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+            . >/tmp/docker-build.log 2>&1; then
+            echo "Docker build failed."
+            exit 1
+          fi
+          docker push "${IMAGE_URI}" >/dev/null
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" >/dev/null
+          echo "Container image pushed to ECR."
           echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
 
       - name: Download current task definition
@@ -1104,13 +1333,39 @@ jobs:
           repository: enterprise-data-platform-emeka/platform-slack-mcp-gateway
           token: ${{ secrets.GH_PAT }}
 
+      - name: Mask AWS account ID in logs
+        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
+
       - name: Configure AWS credentials (OIDC)
         if: ${{ inputs.deploy_slack_mcp }}
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ needs.terraform-apply.outputs.account_id }}:role/edp-${{ env.ENV }}-github-actions-role
-          aws-region: ${{ env.AWS_REGION }}
-
+        env:
+          ROLE_ARN: arn:aws:iam::${{ needs.terraform-apply.outputs.account_id }}:role/edp-${{ env.ENV }}-github-actions-role
+          AWS_REGION_VALUE: ${{ env.AWS_REGION }}
+        run: |
+          echo "::add-mask::${ROLE_ARN}"
+          OIDC_TOKEN_JSON=$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          OIDC_TOKEN=$(printf '%s' "${OIDC_TOKEN_JSON}" | jq -r '.value')
+          CREDS=$(aws sts assume-role-with-web-identity \
+            --role-arn "${ROLE_ARN}" \
+            --role-session-name "github-actions" \
+            --web-identity-token "${OIDC_TOKEN}" \
+            --duration-seconds 3600 \
+            --query Credentials \
+            --output json)
+          AWS_ACCESS_KEY_ID=$(printf '%s' "${CREDS}" | jq -r '.AccessKeyId')
+          AWS_SECRET_ACCESS_KEY=$(printf '%s' "${CREDS}" | jq -r '.SecretAccessKey')
+          AWS_SESSION_TOKEN=$(printf '%s' "${CREDS}" | jq -r '.SessionToken')
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
+          {
+            echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+            echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+            echo "AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}"
+            echo "AWS_REGION=${AWS_REGION_VALUE}"
+            echo "AWS_DEFAULT_REGION=${AWS_REGION_VALUE}"
+          } >> "$GITHUB_ENV"
+          echo "AWS credentials configured via OIDC."
       - name: Seed Slack tokens into Secrets Manager
         if: ${{ inputs.deploy_slack_mcp }}
         env:
@@ -1129,24 +1384,33 @@ jobs:
 
       - name: Log in to Amazon ECR
         if: ${{ inputs.deploy_slack_mcp }}
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        run: |
+          ECR_REGISTRY="${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "::add-mask::${ECR_REGISTRY}"
+          aws ecr get-login-password --region "${AWS_REGION}" |
+            docker login --username AWS --password-stdin "${ECR_REGISTRY}" >/dev/null
+          echo "Logged in to Amazon ECR."
 
       - name: Build, tag, and push image to ECR
         if: ${{ inputs.deploy_slack_mcp }}
         id: build-image
         env:
-          ECR_REGISTRY:   ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: edp-${{ env.ENV }}-slack-mcp-gateway
           IMAGE_TAG:      sha-${{ github.sha }}
         run: |
+          ECR_REGISTRY="${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "::add-mask::${ECR_REGISTRY}"
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
-          docker build \
+          if ! docker build \
             -t "${IMAGE_URI}" \
             -t "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
-            .
-          docker push "${IMAGE_URI}"
-          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+            . >/tmp/docker-build.log 2>&1; then
+            echo "Docker build failed."
+            exit 1
+          fi
+          docker push "${IMAGE_URI}" >/dev/null
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" >/dev/null
+          echo "Container image pushed to ECR."
           echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
 
       - name: Download current task definition
@@ -1184,7 +1448,7 @@ jobs:
             --cluster "edp-${ENV}-slack-mcp-gateway" \
             --service "edp-${ENV}-slack-mcp-gateway" \
             --desired-count 1 \
-            --force-new-deployment
+            --force-new-deployment >/dev/null
           aws ecs wait services-stable \
             --cluster "edp-${ENV}-slack-mcp-gateway" \
             --services "edp-${ENV}-slack-mcp-gateway"
@@ -1220,33 +1484,68 @@ jobs:
           repository: enterprise-data-platform-emeka/platform-analytics-web
           token: ${{ secrets.GH_PAT }}
 
+      - name: Mask AWS account ID in logs
+        run: echo "::add-mask::${{ vars.AWS_ACCOUNT_ID }}"
+
       - name: Configure AWS credentials (OIDC)
         if: ${{ inputs.deploy_analytics_web }}
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ needs.terraform-apply.outputs.account_id }}:role/edp-${{ env.ENV }}-github-actions-role
-          aws-region: ${{ env.AWS_REGION }}
-
+        env:
+          ROLE_ARN: arn:aws:iam::${{ needs.terraform-apply.outputs.account_id }}:role/edp-${{ env.ENV }}-github-actions-role
+          AWS_REGION_VALUE: ${{ env.AWS_REGION }}
+        run: |
+          echo "::add-mask::${ROLE_ARN}"
+          OIDC_TOKEN_JSON=$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          OIDC_TOKEN=$(printf '%s' "${OIDC_TOKEN_JSON}" | jq -r '.value')
+          CREDS=$(aws sts assume-role-with-web-identity \
+            --role-arn "${ROLE_ARN}" \
+            --role-session-name "github-actions" \
+            --web-identity-token "${OIDC_TOKEN}" \
+            --duration-seconds 3600 \
+            --query Credentials \
+            --output json)
+          AWS_ACCESS_KEY_ID=$(printf '%s' "${CREDS}" | jq -r '.AccessKeyId')
+          AWS_SECRET_ACCESS_KEY=$(printf '%s' "${CREDS}" | jq -r '.SecretAccessKey')
+          AWS_SESSION_TOKEN=$(printf '%s' "${CREDS}" | jq -r '.SessionToken')
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
+          {
+            echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+            echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+            echo "AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}"
+            echo "AWS_REGION=${AWS_REGION_VALUE}"
+            echo "AWS_DEFAULT_REGION=${AWS_REGION_VALUE}"
+          } >> "$GITHUB_ENV"
+          echo "AWS credentials configured via OIDC."
       - name: Log in to Amazon ECR
         if: ${{ inputs.deploy_analytics_web }}
-        id: login-ecr-web
-        uses: aws-actions/amazon-ecr-login@v2
+        run: |
+          ECR_REGISTRY="${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "::add-mask::${ECR_REGISTRY}"
+          aws ecr get-login-password --region "${AWS_REGION}" |
+            docker login --username AWS --password-stdin "${ECR_REGISTRY}" >/dev/null
+          echo "Logged in to Amazon ECR."
 
       - name: Build, tag, and push image to ECR
         if: ${{ inputs.deploy_analytics_web }}
         id: build-web-image
         env:
-          ECR_REGISTRY:   ${{ steps.login-ecr-web.outputs.registry }}
           ECR_REPOSITORY: edp-${{ env.ENV }}-analytics-web
           IMAGE_TAG:      sha-${{ github.sha }}
         run: |
+          ECR_REGISTRY="${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "::add-mask::${ECR_REGISTRY}"
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
-          docker build \
+          if ! docker build \
             -t "${IMAGE_URI}" \
             -t "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
-            .
-          docker push "${IMAGE_URI}"
-          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+            . >/tmp/docker-build.log 2>&1; then
+            echo "Docker build failed."
+            exit 1
+          fi
+          docker push "${IMAGE_URI}" >/dev/null
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" >/dev/null
+          echo "Container image pushed to ECR."
           echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
 
       - name: Download current task definition
@@ -1284,13 +1583,13 @@ jobs:
             --cluster "edp-${ENV}-analytics-web" \
             --service "edp-${ENV}-analytics-web" \
             --desired-count 1 \
-            --force-new-deployment
+            --force-new-deployment >/dev/null
           aws ecs wait services-stable \
             --cluster "edp-${ENV}-analytics-web" \
             --services "edp-${ENV}-analytics-web"
           echo "Analytics web dashboard deployed and stable."
 
-# ── Job 10: Session ready — print access URLs ─────────────────────────────────
+# ── Job 10: Session ready — confirm availability without public endpoints ─────
 
   session-ready:
     name: Session ready
@@ -1306,8 +1605,6 @@ jobs:
           SERVING_LAYER: ${{ inputs.serving_layer }}
           DEPLOY_SLACK_MCP: ${{ inputs.deploy_slack_mcp }}
           DEPLOY_ANALYTICS_WEB: ${{ inputs.deploy_analytics_web }}
-          ALB_DNS:      ${{ needs.terraform-apply.outputs.alb_dns }}
-          ANALYTICS_WEB_URL: ${{ needs.terraform-apply.outputs.analytics_web_url }}
         run: |
           echo ""
           echo "================================================"
@@ -1318,18 +1615,16 @@ jobs:
           echo "  Orchestrator : ${ORCHESTRATOR}"
           echo "  Serving layer: ${SERVING_LAYER}"
           echo ""
-          echo "  Streamlit UI (open in browser from within VPC):"
-          echo "    http://${ALB_DNS}:8501"
+          echo "  Streamlit UI:"
+          echo "    Ready. Read the analytics agent ALB DNS from Terraform output or the AWS console."
           echo ""
           if [ "${DEPLOY_ANALYTICS_WEB}" = "true" ]; then
             echo "  Custom HTML Analytics UI:"
-            echo "    ${ANALYTICS_WEB_URL}"
+            echo "    Ready. Read the dashboard URL from Terraform output or the AWS console."
             echo ""
           fi
-          echo "  FastAPI (curl from within VPC):"
-          echo "    curl -s -X POST http://${ALB_DNS}/ask \\"
-          echo "      -H 'Content-Type: application/json' \\"
-          echo "      -d '{\"question\": \"Which country has the highest revenue?\"}'"
+          echo "  FastAPI:"
+          echo "    Ready behind the analytics agent Application Load Balancer."
           echo ""
           if [ "${DEPLOY_SLACK_MCP}" = "true" ]; then
             echo "  Slack MCP Gateway:"

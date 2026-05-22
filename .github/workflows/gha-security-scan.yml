@@ -1,11 +1,8 @@
 name: GHA Secret Exposure Scan
 
-# Scans all workflow files in this repo for patterns that expose secrets:
-#   - workflow_dispatch inputs with credential names and type: string
-#   - inputs.* used in credential env vars
-#   - raw file dumps to GITHUB_STEP_SUMMARY (Terraform plan leak vector)
-#   - toJSON(secrets)
-# Blocks merge if any pattern is found.
+# Scans workflow files for patterns that expose secrets or account identifiers.
+# Public logs should confirm progress without printing account details, ARNs,
+# endpoint URLs, registry URLs, bucket names, Terraform plans, or raw AWS JSON.
 
 on:
   push:
@@ -13,12 +10,12 @@ on:
 
 jobs:
   scan:
-    name: Scan workflow files for secret exposure
+    name: Scan workflow files for secret and ID exposure
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Scan for secret exposure patterns
+      - name: Scan for secret and ID exposure patterns
         run: |
           python3 - .github/workflows << 'PYEOF'
           import glob, re, sys
@@ -27,11 +24,30 @@ jobs:
               r'\b(password|passwd|pwd|secret|token|api_key|private_key|credential)\b',
               re.IGNORECASE,
           )
+          SENSITIVE_ECHO = re.compile(
+              r'\becho\b.*('
+              r'AWS_ACCOUNT_ID|arn:aws:|TASK_ARN|EXECUTION_ARN|REGISTERED_ARN|'
+              r'STATE_MACHINE_ARN|DMS_TASK_ARN|IMAGE_URI|ECR_REGISTRY|ALB_DNS|'
+              r'ANALYTICS_WEB_URL|s3://|http://|https://|Cluster\s*:|Service\s*:|Image\s*:'
+              r')',
+              re.IGNORECASE,
+          )
+          PLAN_TEE = re.compile(r'terraform\s+plan.*\|\s*tee\b', re.IGNORECASE)
+          RAW_AWS_JSON_COMMAND = re.compile(
+              r'aws\s+(ecs\s+update-service|ecs\s+run-task|stepfunctions\s+start-execution|'
+              r'ecr\s+describe-|secretsmanager\s+put-secret-value)',
+              re.IGNORECASE,
+          )
+
+          def next_nonempty(lines, start):
+              for line in lines[start: start + 8]:
+                  stripped = line.strip()
+                  if stripped:
+                      return stripped
+              return ''
 
           def scan(workflow_dir):
-              files = sorted(
-                  glob.glob(f'{workflow_dir}/*.yml') + glob.glob(f'{workflow_dir}/*.yaml')
-              )
+              files = sorted(glob.glob(f'{workflow_dir}/*.yml') + glob.glob(f'{workflow_dir}/*.yaml'))
               if not files:
                   print(f'No workflow files found in {workflow_dir}')
                   return True
@@ -39,11 +55,15 @@ jobs:
               failed = False
 
               for path in files:
+                  if path.endswith('/gha-security-scan.yml'):
+                      continue
+
                   with open(path) as fh:
                       lines = fh.readlines()
 
                   for i, line in enumerate(lines):
                       lineno = i + 1
+                      stripped = line.strip()
                       if re.match(r'^\s*#', line):
                           continue
 
@@ -53,42 +73,66 @@ jobs:
                               if re.search(r'type:\s*string', wl):
                                   print(
                                       f'FAIL [{path}:{lineno + j}] '
-                                      f'Input "{m.group(1)}" is type:string — '
-                                      f'visible in run history as plaintext. '
-                                      f'Remove this input and use a GitHub secret instead.'
+                                      f'Input "{m.group(1)}" is type:string and is visible in run history. '
+                                      f'Use a GitHub secret instead.'
                                   )
                                   failed = True
                                   break
 
+                      if 'uses: aws-actions/amazon-ecr-login' in line:
+                          print(
+                              f'FAIL [{path}:{lineno}] '
+                              'Do not use amazon-ecr-login in public repos because it can print registry details.'
+                          )
+                          failed = True
+
+                      if 'uses: aws-actions/configure-aws-credentials' in line:
+                          print(
+                              f'FAIL [{path}:{lineno}] '
+                              'Do not use configure-aws-credentials in public repos because it can print assumed role identifiers.'
+                          )
+                          failed = True
+
                       if re.search(r'\$\{\{\s*inputs\.', line) and re.search(
                           r'(?i)(password|passwd|pwd|secret|token|api.?key|credential)', line
                       ):
-                          print(
-                              f'FAIL [{path}:{lineno}] '
-                              f'inputs.* used in a credential env var: {line.strip()}'
-                          )
+                          print(f'FAIL [{path}:{lineno}] inputs.* used in a credential env var: {stripped}')
                           failed = True
 
                       if re.search(r'\bcat\b.+>>', line) and 'GITHUB_STEP_SUMMARY' in line:
-                          print(
-                              f'FAIL [{path}:{lineno}] '
-                              f'Raw file dumped to GITHUB_STEP_SUMMARY '
-                              f'(Terraform plan may leak values): {line.strip()}'
-                          )
+                          print(f'FAIL [{path}:{lineno}] Raw file dumped to GITHUB_STEP_SUMMARY: {stripped}')
                           failed = True
 
                       if re.search(r'\$\{\{.*toJSON\s*\(\s*secrets\s*\)', line, re.IGNORECASE):
+                          print(f'FAIL [{path}:{lineno}] toJSON(secrets) exposes all secret values: {stripped}')
+                          failed = True
+
+                      if SENSITIVE_ECHO.search(line) and '::add-mask::' not in line and 'GITHUB_OUTPUT' not in line and 'GITHUB_ENV' not in line:
                           print(
                               f'FAIL [{path}:{lineno}] '
-                              f'toJSON(secrets) exposes all secret values: {line.strip()}'
+                              f'Do not echo account IDs, ARNs, image registries, bucket paths, or endpoints: {stripped}'
                           )
                           failed = True
 
+                      if PLAN_TEE.search(line):
+                          print(f'FAIL [{path}:{lineno}] Do not stream full Terraform plan output to public logs: {stripped}')
+                          failed = True
+
+                      if RAW_AWS_JSON_COMMAND.search(line):
+                          block = ''.join(lines[i: i + 12])
+                          captures_output = '=$(' in line or '=$(aws ' in line
+                          if not captures_output and '>/dev/null' not in block and '> /dev/null' not in block and '> task-definition.json' not in block:
+                              print(
+                                  f'FAIL [{path}:{lineno}] '
+                                  f'Raw AWS CLI output may expose IDs. Redirect or query only the needed value: {stripped}'
+                              )
+                              failed = True
+
               if failed:
-                  print('\nSCAN FAILED — fix the issues above before merging.')
+                  print('\nSCAN FAILED. Fix the issues above before merging.')
                   return False
 
-              print(f'SCAN PASSED — {len(files)} workflow file(s) checked.')
+              print(f'SCAN PASSED. {len(files)} workflow file(s) checked.')
               return True
 
           sys.exit(0 if scan(sys.argv[1]) else 1)
