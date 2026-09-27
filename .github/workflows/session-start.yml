@@ -107,11 +107,9 @@ jobs:
       account_id:                        ${{ steps.account.outputs.id }}
       cdc_simulator_ecr_url:             ${{ steps.tf-outputs.outputs.cdc_simulator_ecr_url }}
       cdc_simulator_cluster:             ${{ steps.tf-outputs.outputs.cdc_simulator_cluster }}
-      cdc_simulator_task_definition:     ${{ steps.tf-outputs.outputs.cdc_simulator_task_definition }}
       cdc_simulator_container_name:      ${{ steps.tf-outputs.outputs.cdc_simulator_container_name }}
       cdc_simulator_security_group_id:   ${{ steps.tf-outputs.outputs.cdc_simulator_security_group_id }}
       cdc_simulator_private_subnet_ids:  ${{ steps.tf-outputs.outputs.cdc_simulator_private_subnet_ids }}
-      dms_replication_task_arn:          ${{ steps.tf-outputs.outputs.dms_replication_task_arn }}
       rds_identifier:                    ${{ steps.tf-outputs.outputs.rds_identifier }}
       analytics_web_url:                 ${{ steps.tf-outputs.outputs.analytics_web_url }}
 
@@ -274,10 +272,8 @@ jobs:
           echo "alb_dns=$(optional_output analytics_agent_alb_dns)" >> "$GITHUB_OUTPUT"
           echo "cdc_simulator_ecr_url=$(optional_output cdc_simulator_ecr_url)" >> "$GITHUB_OUTPUT"
           echo "cdc_simulator_cluster=$(optional_output cdc_simulator_cluster)" >> "$GITHUB_OUTPUT"
-          echo "cdc_simulator_task_definition=$(optional_output cdc_simulator_task_definition)" >> "$GITHUB_OUTPUT"
           echo "cdc_simulator_container_name=$(optional_output cdc_simulator_container_name)" >> "$GITHUB_OUTPUT"
           echo "cdc_simulator_security_group_id=$(optional_output cdc_simulator_security_group_id)" >> "$GITHUB_OUTPUT"
-          echo "dms_replication_task_arn=$(optional_output dms_replication_task_arn)" >> "$GITHUB_OUTPUT"
           echo "rds_identifier=$(optional_output rds_identifier)" >> "$GITHUB_OUTPUT"
           echo "analytics_web_url=$(optional_output analytics_web_url)" >> "$GITHUB_OUTPUT"
           {
@@ -384,14 +380,25 @@ jobs:
         if: ${{ inputs.run_cdc_simulator }}
         id: cdc-task-def
         env:
-          TASK_DEFINITION: ${{ needs.terraform-apply.outputs.cdc_simulator_task_definition }}
+          # Resolve the family in this job: account-bearing ARNs are withheld
+          # by GitHub when exported as job outputs.
+          TASK_DEFINITION: edp-${{ env.ENV }}-cdc-simulator
           CONTAINER_NAME: ${{ needs.terraform-apply.outputs.cdc_simulator_container_name }}
           IMAGE_URI: ${{ steps.build-cdc-image.outputs.image }}
         run: |
           aws ecs describe-task-definition \
             --task-definition "${TASK_DEFINITION}" \
             --query taskDefinition \
-            > task-definition.json
+            > task-definition.json 2>/tmp/cdc-task-definition-error.txt || {
+              echo "Could not resolve the CDC simulator task definition."
+              exit 1
+            }
+
+          if ! jq -e --arg name "${CONTAINER_NAME}" \
+            '.containerDefinitions | any(.name == $name)' task-definition.json >/dev/null; then
+            echo "CDC simulator container was not found in the task definition."
+            exit 1
+          fi
 
           jq --arg IMAGE_URI "${IMAGE_URI}" --arg CONTAINER_NAME "${CONTAINER_NAME}" '
             .containerDefinitions |= map(
@@ -471,25 +478,50 @@ jobs:
 
       - name: Start DMS full-load and CDC task
         if: ${{ inputs.run_cdc_simulator }}
-        env:
-          DMS_TASK_ARN: ${{ needs.terraform-apply.outputs.dms_replication_task_arn }}
         run: |
-          set +e
-          OUTPUT=$(aws dms start-replication-task \
-            --replication-task-arn "${DMS_TASK_ARN}" \
-            --start-replication-task-type reload-target 2>&1)
-          STATUS=$?
-          set -e
-          if [ "${STATUS}" -ne 0 ]; then
-            if echo "${OUTPUT}" | grep -qi "InvalidResourceStateFault"; then
-              echo "DMS task is already running. Continuing to readiness check."
-            else
-              echo "${OUTPUT}"
-              exit "${STATUS}"
-            fi
-          else
-            echo "DMS replication task started."
+          # Discover the ARN locally; GitHub drops job outputs containing the
+          # masked AWS account ID. Never print the response or the ARN.
+          if ! aws dms describe-replication-tasks \
+            --filters "Name=replication-task-id,Values=edp-${ENV}-cdc-task" \
+            --query 'ReplicationTasks[].{arn:ReplicationTaskArn,status:Status}' \
+            --output json > /tmp/cdc-dms-task.json 2>/tmp/cdc-dms-error.txt; then
+            echo "Could not resolve the DMS replication task."
+            exit 1
           fi
+          if ! jq -e 'length == 1 and (.[0].arn | type == "string" and length > 0)' \
+            /tmp/cdc-dms-task.json >/dev/null; then
+            echo "Expected exactly one DMS replication task with a valid ARN."
+            exit 1
+          fi
+          DMS_TASK_ARN=$(jq -r '.[0].arn' /tmp/cdc-dms-task.json)
+          DMS_STATUS=$(jq -r '.[0].status' /tmp/cdc-dms-task.json)
+          echo "::add-mask::${DMS_TASK_ARN}"
+
+          case "${DMS_STATUS}" in
+            ready)
+              START_TYPE=start-replication
+              ;;
+            stopped|failed)
+              START_TYPE=reload-target
+              ;;
+            running|starting)
+              echo "DMS replication task is already running or starting."
+              exit 0
+              ;;
+            *)
+              echo "DMS replication task is not in a startable state."
+              exit 1
+              ;;
+          esac
+
+          if ! aws dms start-replication-task \
+            --replication-task-arn "${DMS_TASK_ARN}" \
+            --start-replication-task-type "${START_TYPE}" \
+            >/dev/null 2>/tmp/cdc-dms-error.txt; then
+            echo "DMS replication task could not be started."
+            exit 1
+          fi
+          echo "DMS replication task started."
 
       - name: Wait for seeded Bronze data in S3
         if: ${{ inputs.run_cdc_simulator }}
