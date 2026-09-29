@@ -13,3 +13,9 @@ secret*.tfvars
 *.pfx
 credentials
 aws_credentials
+
+# Python lifecycle helpers
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
