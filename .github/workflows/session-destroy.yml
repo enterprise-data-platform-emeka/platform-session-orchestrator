@@ -9,8 +9,9 @@ name: Session Destroy
 #   Everything created by terraform-platform-infra-live for the chosen
 #   environment: VPC (Virtual Private Cloud), MWAA (Amazon Managed Workflows
 #   for Apache Airflow), ECS (Elastic Container Service) Fargate tasks,
-#   ALB (Application Load Balancer), Glue, Athena, S3 (Simple Storage Service)
-#   data buckets, and all IAM (Identity and Access Management) roles.
+#   ALB (Application Load Balancer), Athena, and session IAM roles.
+#   Session S3 contents are permanently emptied, including object versions.
+#   Data-lake bucket containers and standalone Glue job definitions remain.
 #
 # What this does NOT destroy:
 #   terraform-bootstrap resources (OIDC provider, github-actions-role, tfstate
@@ -24,7 +25,6 @@ name: Session Destroy
 #   DB_PASSWORD             — RDS master password
 #   REDSHIFT_ADMIN_PASSWORD — Redshift admin password
 #
-# Cost reminder: a typical 2-3 hour session costs ~$1.50-$2.50 total.
 
 on:
   workflow_dispatch:
@@ -36,9 +36,13 @@ on:
         type: choice
         options: [dev, staging, prod]
       confirm:
-        description: "Type 'destroy' to confirm teardown"
+        description: "Type 'destroy' to tear down runtime AND permanently empty session data"
         required: true
         type: string
+
+concurrency:
+  group: platform-session-${{ inputs.env }}
+  cancel-in-progress: false
 
 jobs:
   terraform-destroy:
@@ -66,10 +70,19 @@ jobs:
           repository: enterprise-data-platform-emeka/terraform-platform-infra-live
           token: ${{ secrets.GH_PAT }}
 
+      - name: Checkout session cleanup helpers
+        uses: actions/checkout@v4
+        with:
+          path: session-tools
+
+      - name: Install cleanup dependencies
+        run: python3 -m pip install --quiet boto3==1.35.0
+
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "~1.6"
+          terraform_wrapper: false
 
       - name: Mask AWS account ID in logs
         env:
@@ -129,12 +142,24 @@ jobs:
             echo "Deletion protection already off or instance does not exist — no action needed."
           fi
 
-      - name: Terraform destroy (preserves S3 data buckets)
+      - name: Stop standalone Glue writers
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: python3 session-tools/scripts/session_data.py stop-glue --environment "$ENV"
+
+      - name: Terraform destroy (keeps emptyable data buckets)
         id: terraform_destroy
         continue-on-error: true
         run: make destroy-safe ${{ env.ENV }}
 
+      - name: Empty all session S3 data and verify
+        if: ${{ steps.terraform_destroy.outcome == 'success' }}
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: python3 session-tools/scripts/session_data.py empty --environment "$ENV"
+
       - name: Schedule leftover customer-managed KMS keys
+        if: ${{ steps.terraform_destroy.outcome == 'success' }}
         run: |
           set -euo pipefail
 
@@ -164,24 +189,27 @@ jobs:
               --output text)
 
             if [ "${KEY_MANAGER}" != "CUSTOMER" ]; then
-              echo "Skipping AWS-managed key: ${KEY_ARN}"
+              echo "Skipping AWS-managed key."
               continue
             fi
 
             if [ "${KEY_STATE}" = "PendingDeletion" ] || [ "${KEY_STATE}" = "PendingReplicaDeletion" ]; then
-              echo "KMS key already pending deletion: ${KEY_ARN}"
+              echo "KMS key already pending deletion."
               continue
             fi
 
-            echo "Scheduling KMS key for deletion: ${KEY_ARN}"
+            echo "Scheduling session KMS key deletion."
             aws kms schedule-key-deletion \
               --region "${AWS_REGION}" \
               --key-id "${KEY_ARN}" \
-              --pending-window-in-days 7
+              --pending-window-in-days 7 >/dev/null
           done
 
           cd environments/${ENV}
-          terraform state rm module.iam_metadata.aws_kms_key.platform || true
+          STATE_RESOURCES=$(terraform state list)
+          if printf '%s\n' "$STATE_RESOURCES" | grep -qx 'module.iam_metadata.aws_kms_key.platform'; then
+            terraform state rm module.iam_metadata.aws_kms_key.platform >/dev/null
+          fi
 
       - name: Verify no billable session resources remain
         run: |
@@ -257,8 +285,7 @@ jobs:
           echo "  SESSION DESTROYED"
           echo "================================================"
           echo ""
-          echo "  All ${ENV} AWS resources have been torn down."
-          echo "  Typical session cost: ~\$1.50-\$2.50 for a 2-3 hour session."
+          echo "  Session runtime removed; session S3 objects and versions emptied."
           echo ""
           echo "  terraform-bootstrap resources (OIDC, tfstate bucket, lock"
           echo "  table) are permanent and were NOT destroyed."

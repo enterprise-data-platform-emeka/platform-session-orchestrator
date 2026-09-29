@@ -15,10 +15,10 @@ flowchart LR
     A([session-start]) --> B[Infrastructure live\nData pipeline ran\nAnalytics Agent ready]
     B --> C([Work: ask questions\ntest features\nvalidate data])
     C --> D([session-destroy])
-    D --> E([All compute gone\nS3 data preserved\nCost: zero])
+    D --> E([All compute gone\nSession S3 data emptied\nBackend state retained])
 ```
 
-A typical 2 to 3 hour session costs around $1.50 to $2.50 total. S3 (Simple Storage Service) buckets are preserved across sessions so Bronze, Silver, and Gold data accumulates over time without paying for idle compute.
+Session Destroy empties session S3 (Simple Storage Service) data, including all object versions. Empty data-lake buckets and Terraform backend state remain. Storage and compute costs are measured per session; retained backend state and logs can still be billed.
 
 ---
 
@@ -79,7 +79,8 @@ flowchart TD
 | `env` | choice | `dev` | Target environment: `dev`, `staging`, or `prod` |
 | `orchestrator` | choice | `step-functions` | `step-functions` for fast startup (~10 min). `mwaa` for visual Airflow task graph (~6-8 min pipeline, but 25 min environment startup) |
 | `serving_layer` | choice | `athena-only` | `athena-only` keeps Gold data in Athena/S3. `redshift-bi` creates Redshift Serverless |
-| `run_cdc_simulator` | boolean | `false` | Seeds RDS (Relational Database Service), starts DMS (Database Migration Service), and runs bounded live CDC (Change Data Capture) injection |
+| `data_mode` | choice | `seed-only` | Historical seed without live injection; `seed-and-live` enables bounded injection; `reuse-retained` requires existing same-day data |
+| `seed_profile` | choice | `customer-intelligence-36m` | 20,000 customers, 1,500 products, 300,000 orders; `smoke` selects the smaller fixture |
 | `cdc_simulator_duration_minutes` | choice | `10` | Duration of live CDC injection after bootstrap: 5, 10, 15, 30, or 60 minutes |
 | `deploy_slack_mcp` | boolean | `false` | Builds and deploys the Slack MCP (Model Context Protocol) gateway after the Analytics Agent |
 
@@ -87,7 +88,7 @@ flowchart TD
 
 1. **terraform-apply** — checks out `terraform-platform-infra-live` and applies all infrastructure for the chosen environment. Passes TF_VAR overrides based on the selected orchestrator, serving layer, and optional modules. Exports Terraform outputs (ALB (Application Load Balancer) DNS, CDC cluster details, RDS identifier) for downstream jobs.
 
-2. **cdc-source-ready** (optional) — builds and pushes the CDC simulator image to ECR (Elastic Container Registry), runs schema + seed bootstrap as an ECS (Elastic Container Service) Fargate task, reboots RDS to activate logical replication, starts DMS, and polls Bronze S3 until Parquet files appear for all six source tables.
+2. **cdc-source-ready** (optional) — builds and pushes the CDC simulator image to ECR (Elastic Container Registry), runs schema + seed bootstrap as an ECS (Elastic Container Service) Fargate task, reboots RDS to activate logical replication, starts DMS, and validates the current full load across eight source tables, including history and manifest. Seed-only stops the DMS task afterwards; seed-and-live starts bounded injection.
 
 3. **deploy-glue-scripts** (parallel) — packages `lib/` into `lib.zip`, syncs all job scripts to the Glue scripts S3 bucket, and upserts Glue job definitions for the six Silver jobs.
 
@@ -126,7 +127,7 @@ Use Step Functions for every regular session. It starts in 5 minutes and costs l
 
 ### session-destroy.yml
 
-Tears down all session compute resources. S3 data buckets are preserved intentionally.
+Tears down all session compute resources. S3 data-lake bucket containers remain, but their contents, versions, and incomplete multipart uploads are permanently removed.
 
 **Inputs:**
 
@@ -148,11 +149,11 @@ flowchart TD
     DESTROY --> INGEST[RDS PostgreSQL\nDMS replication instance]
     DESTROY --> MON[CloudWatch alarms\nSNS topic]
 
-    PRESERVE[Always preserved] --> S3[S3 data buckets\nbronze, silver, gold\nathena-results\nglue-scripts\nquarantine]
+    PRESERVE[Always preserved] --> S3[Empty S3 bucket containers\nbronze, silver, gold\nathena-results\nglue-scripts\nquarantine]
     PRESERVE --> BOOT[terraform-bootstrap\nOIDC provider\nGitHub Actions role\ntfstate bucket\nDynamoDB lock table]
 ```
 
-The destroy uses `make destroy-safe` which dynamically discovers all modules in Terraform state and targets them for deletion, excluding `module.data_lake`. S3 buckets are never deleted by the workflow.
+The destroy uses `make destroy-safe` which dynamically discovers all modules in Terraform state and targets them for deletion, excluding `module.data_lake`. The data-lake buckets remain; their data is permanently deleted after successful runtime teardown. The optional MWAA bucket follows its owning module.
 
 ---
 
@@ -177,7 +178,7 @@ All secrets are scoped per GitHub Environment (Settings > Environments > {env}).
 | Secret | When required |
 |---|---|
 | `GH_PAT` | Always — cross-repo checkout |
-| `DB_PASSWORD` | When `run_cdc_simulator=true` |
+| `DB_PASSWORD` | When `data_mode` is `seed-only` or `seed-and-live` |
 | `REDSHIFT_ADMIN_PASSWORD` | When `serving_layer=redshift-bi` (and always for destroy) |
 | `SLACK_APP_TOKEN` | When `deploy_slack_mcp=true` |
 | `SLACK_BOT_TOKEN` | When `deploy_slack_mcp=true` |
@@ -274,3 +275,26 @@ platform-session-orchestrator/
 ```
 
 There is no application code in this repo. All logic is in the GitHub Actions workflow YAML files, which coordinate the other platform repos via cross-repo checkout.
+
+## Daily seed and cleanup contract
+
+Default historical interval: 2023-09-01 inclusive to 2026-09-01 exclusive,
+seed 42, generator `customer-history-v1`. The source manifest verifies identity
+and counts; a different or partial source fails instead of silently appending.
+Seeding requires an empty Bronze `raw/` prefix. A new full load must finish with
+expected counts before either downstream orchestrator starts. Live duration is
+ignored in seed-only mode. Stopping a DMS task does not stop instance billing.
+
+Session Destroy's existing `destroy` confirmation now includes irreversible
+session data deletion. All versions, delete markers and multipart uploads in
+the six data-lake buckets and optional MWAA bucket are removed. A cleanup failure
+fails the run. Terraform backend state is excluded; no arbitrary bucket purge
+is accepted. Export required evidence to local storage before teardown.
+`reuse-retained` fails after daily cleanup. Both workflows share a concurrency
+group; do not run separate deployment workflows during teardown.
+
+Rollout order: simulator, infrastructure, Glue and dbt, then this workflow.
+Start with `seed_profile=smoke`, verify startup and teardown, then run the full
+profile. Infrastructure configures the seed task with 1 vCPU and 2 GiB.
+
+Validation: `python -m pytest tests -q` after installing pytest, PyYAML and boto3.

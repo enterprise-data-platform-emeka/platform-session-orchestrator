@@ -6,7 +6,7 @@ name: Session Start
 #
 #   terraform-apply (~5 min for Step Functions, ~25 min for MWAA)
 #       |
-#       |--- cdc-source-ready (optional; seed RDS, start DMS, launch live injection)
+#       |--- cdc-source-ready (validate seed or retained data; live injection is opt-in)
 #       |--- deploy-glue-scripts (seconds) ───────────────────\
 #       |--- sync-dbt (seconds) ──────────────────────────────+──> trigger-pipeline (~10 min)
 #       |--- upload-dag (MWAA only, seconds) ─────────────────/          |
@@ -34,7 +34,7 @@ name: Session Start
 # Required secrets / variables (Settings -> Secrets and variables -> Actions):
 #   Secrets (per Environment: dev / staging / prod):
 #     GH_PAT          — GitHub PAT with repo scope (for cross-repo checkout)
-#     DB_PASSWORD     — RDS source database password (required when run_cdc_simulator=true)
+#     DB_PASSWORD     — RDS source database password (required when data_mode is seed-only or seed-and-live)
 #     REDSHIFT_ADMIN_PASSWORD — Redshift admin password (required when serving is enabled)
 #     SLACK_APP_TOKEN — Slack Socket Mode app token (xapp-...), used when deploy_slack_mcp=true
 #     SLACK_BOT_TOKEN — Slack bot OAuth token (xoxb-...), used when deploy_slack_mcp=true
@@ -68,11 +68,18 @@ on:
         default: athena-only
         type: choice
         options: [athena-only, redshift-bi]
-      run_cdc_simulator:
-        description: "Create dev CDC infrastructure, seed RDS, start DMS, and run live injection."
+      data_mode:
+        description: "Data mode (seed-only rebuilds history without live injection)"
         required: true
-        default: false
-        type: boolean
+        default: seed-only
+        type: choice
+        options: [seed-only, seed-and-live, reuse-retained]
+      seed_profile:
+        description: "Seed size (both profiles use fixed 36-month history)"
+        required: true
+        default: customer-intelligence-36m
+        type: choice
+        options: [customer-intelligence-36m, smoke]
       cdc_simulator_duration_minutes:
         description: "Live CDC injection duration after seed/bootstrap"
         required: true
@@ -91,7 +98,7 @@ on:
         type: boolean
 
 concurrency:
-  group: session-start-${{ inputs.env }}
+  group: platform-session-${{ inputs.env }}
   cancel-in-progress: false
 
 # ── Job 1: Apply all AWS infrastructure ──────────────────────────────────────
@@ -186,9 +193,9 @@ jobs:
           REDSHIFT_ADMIN_PASSWORD: ${{ secrets.REDSHIFT_ADMIN_PASSWORD }}
         run: |
           cd environments/${{ env.ENV }}
-          if [ "${{ inputs.run_cdc_simulator }}" = "true" ]; then
+          if [ "${{ inputs.data_mode }}" != "reuse-retained" ]; then
             if [ -z "${DB_PASSWORD}" ]; then
-              echo "DB_PASSWORD is required when run_cdc_simulator=true."
+              echo "DB_PASSWORD is required when data_mode is seed-only or seed-and-live."
               exit 1
             fi
             export TF_VAR_enable_cdc_simulator=true
@@ -237,7 +244,7 @@ jobs:
             echo "Analytics web dashboard infrastructure disabled for this session."
           fi
           set +e
-          terraform plan -no-color -input=false -out=tfplan > /tmp/session-plan.txt 2>&1
+          terraform plan -lock-timeout=5m -no-color -input=false -out=tfplan > /tmp/session-plan.txt 2>&1
           PLAN_STATUS=$?
           set -e
           if [ "${PLAN_STATUS}" -ne 0 ]; then
@@ -250,7 +257,7 @@ jobs:
           grep -E '^\s*(Plan:|No changes|#\s+\w)' /tmp/session-plan.txt | head -120 || true
 
           set +e
-          terraform apply -auto-approve -input=false -no-color tfplan > /tmp/session-apply.txt 2>&1
+          terraform apply -lock-timeout=5m -auto-approve -input=false -no-color tfplan > /tmp/session-apply.txt 2>&1
           APPLY_STATUS=$?
           set -e
           if [ "${APPLY_STATUS}" -ne 0 ]; then
@@ -300,15 +307,23 @@ jobs:
 
     steps:
       - name: Skip when CDC simulator is disabled
-        if: ${{ !inputs.run_cdc_simulator }}
-        run: echo "run_cdc_simulator=false. Continuing without source bootstrap."
+        if: ${{ inputs.data_mode == 'reuse-retained' }}
+        run: echo "Reusing retained data; source bootstrap and live injection are disabled."
 
       - name: Checkout platform-cdc-simulator
-        if: ${{ inputs.run_cdc_simulator }}
+        if: ${{ inputs.data_mode != 'reuse-retained' }}
         uses: actions/checkout@v4
         with:
           repository: enterprise-data-platform-emeka/platform-cdc-simulator
           token: ${{ secrets.GH_PAT }}
+
+      - name: Checkout session helpers
+        uses: actions/checkout@v4
+        with:
+          path: session-tools
+
+      - name: Install session helper dependencies
+        run: python3 -m pip install --quiet boto3==1.35.0
 
       - name: Mask AWS account ID in logs
         env:
@@ -316,7 +331,6 @@ jobs:
         run: echo "::add-mask::${ACCOUNT_ID}"
 
       - name: Configure AWS credentials (OIDC)
-        if: ${{ inputs.run_cdc_simulator }}
         env:
           ROLE_ARN: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
           AWS_REGION_VALUE: ${{ env.AWS_REGION }}
@@ -345,8 +359,16 @@ jobs:
             echo "AWS_DEFAULT_REGION=${AWS_REGION_VALUE}"
           } >> "$GITHUB_ENV"
           echo "AWS credentials configured via OIDC."
+      - name: Validate retained seed data
+        if: ${{ inputs.data_mode == 'reuse-retained' }}
+        env:
+          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          SEED_PROFILE: ${{ inputs.seed_profile }}
+        run: |
+          python3 session-tools/scripts/retained_seed.py
+
       - name: Log in to Amazon ECR
-        if: ${{ inputs.run_cdc_simulator }}
+        if: ${{ inputs.data_mode != 'reuse-retained' }}
         run: |
           ECR_REGISTRY="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           echo "::add-mask::${ECR_REGISTRY}"
@@ -355,7 +377,7 @@ jobs:
           echo "Logged in to Amazon ECR."
 
       - name: Build and push simulator image
-        if: ${{ inputs.run_cdc_simulator }}
+        if: ${{ inputs.data_mode != 'reuse-retained' }}
         id: build-cdc-image
         env:
           ECR_REPOSITORY: edp-${{ env.ENV }}-cdc-simulator
@@ -377,7 +399,7 @@ jobs:
           echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
 
       - name: Register simulator task definition revision
-        if: ${{ inputs.run_cdc_simulator }}
+        if: ${{ inputs.data_mode != 'reuse-retained' }}
         id: cdc-task-def
         env:
           # Resolve the family in this job: account-bearing ARNs are withheld
@@ -423,7 +445,7 @@ jobs:
           echo "Registered CDC simulator task definition revision."
 
       - name: Reboot RDS so logical replication parameters are active
-        if: ${{ inputs.run_cdc_simulator }}
+        if: ${{ inputs.data_mode != 'reuse-retained' }}
         env:
           RDS_IDENTIFIER: ${{ needs.terraform-apply.outputs.rds_identifier }}
         run: |
@@ -434,10 +456,24 @@ jobs:
             --db-instance-identifier "${RDS_IDENTIFIER}"
           echo "RDS ${RDS_IDENTIFIER} is available after reboot."
 
+      - name: Require a clean Bronze source prefix
+        if: ${{ inputs.data_mode != 'reuse-retained' }}
+        env:
+          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          COUNT=$(aws s3api list-objects-v2 \
+            --bucket "edp-${ENV}-${ACCOUNT_ID}-bronze" --prefix raw/ \
+            --max-keys 1 --query KeyCount --output text)
+          if [ "$COUNT" != 0 ]; then
+            echo "Bronze source data already exists. Use reuse-retained, or run Session Destroy before reseeding."
+            exit 1
+          fi
+
       - name: Run schema + seed bootstrap task
-        if: ${{ inputs.run_cdc_simulator }}
+        if: ${{ inputs.data_mode != 'reuse-retained' }}
         id: cdc-bootstrap
         env:
+          SEED_PROFILE: ${{ inputs.seed_profile }}
           CLUSTER: ${{ needs.terraform-apply.outputs.cdc_simulator_cluster }}
           TASK_DEFINITION: ${{ steps.cdc-task-def.outputs.task_definition }}
           CONTAINER_NAME: ${{ needs.terraform-apply.outputs.cdc_simulator_container_name }}
@@ -448,7 +484,8 @@ jobs:
           NETWORK_CONFIG="awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUP_ID}],assignPublicIp=DISABLED}"
           OVERRIDES=$(jq -cn \
             --arg name "${CONTAINER_NAME}" \
-            '{containerOverrides:[{name:$name,command:["bootstrap"]}]}')
+            --arg profile "${SEED_PROFILE}" \
+            '{containerOverrides:[{name:$name,command:["bootstrap"],environment:[{name:"SEED_PROFILE",value:$profile}]}]}')
 
           TASK_ARN=$(aws ecs run-task \
             --cluster "${CLUSTER}" \
@@ -465,7 +502,15 @@ jobs:
           fi
 
           echo "Started CDC bootstrap task."
-          aws ecs wait tasks-stopped --cluster "${CLUSTER}" --tasks "${TASK_ARN}"
+          for attempt in 1 2 3; do
+            if aws ecs wait tasks-stopped --cluster "${CLUSTER}" --tasks "${TASK_ARN}"; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "Seed task did not stop within its timeout."
+              exit 1
+            fi
+          done
           EXIT_CODE=$(aws ecs describe-tasks \
             --cluster "${CLUSTER}" \
             --tasks "${TASK_ARN}" \
@@ -476,8 +521,39 @@ jobs:
             exit 1
           fi
 
+      - name: Refresh AWS credentials before DMS load
+        if: ${{ inputs.data_mode != 'reuse-retained' }}
+        env:
+          ROLE_ARN: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          AWS_REGION_VALUE: ${{ env.AWS_REGION }}
+        run: |
+          echo "::add-mask::${ROLE_ARN}"
+          OIDC_TOKEN_JSON=$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          OIDC_TOKEN=$(printf '%s' "${OIDC_TOKEN_JSON}" | jq -r '.value')
+          CREDS=$(aws sts assume-role-with-web-identity \
+            --role-arn "${ROLE_ARN}" \
+            --role-session-name "github-actions" \
+            --web-identity-token "${OIDC_TOKEN}" \
+            --duration-seconds 3600 \
+            --query Credentials \
+            --output json)
+          AWS_ACCESS_KEY_ID=$(printf '%s' "${CREDS}" | jq -r '.AccessKeyId')
+          AWS_SECRET_ACCESS_KEY=$(printf '%s' "${CREDS}" | jq -r '.SecretAccessKey')
+          AWS_SESSION_TOKEN=$(printf '%s' "${CREDS}" | jq -r '.SessionToken')
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
+          {
+            echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+            echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+            echo "AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}"
+            echo "AWS_REGION=${AWS_REGION_VALUE}"
+            echo "AWS_DEFAULT_REGION=${AWS_REGION_VALUE}"
+          } >> "$GITHUB_ENV"
+          echo "AWS credentials configured via OIDC."
+
       - name: Start DMS full-load and CDC task
-        if: ${{ inputs.run_cdc_simulator }}
+        if: ${{ inputs.data_mode != 'reuse-retained' }}
         run: |
           # Discover the ARN locally; GitHub drops job outputs containing the
           # masked AWS account ID. Never print the response or the ARN.
@@ -505,8 +581,8 @@ jobs:
               START_TYPE=reload-target
               ;;
             running|starting)
-              echo "DMS replication task is already running or starting."
-              exit 0
+              echo "Stop the previous source session before starting another seed load."
+              exit 1
               ;;
             *)
               echo "DMS replication task is not in a startable state."
@@ -514,6 +590,7 @@ jobs:
               ;;
           esac
 
+          echo "DMS_LOAD_REQUESTED_AT=$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" >> "$GITHUB_ENV"
           if ! aws dms start-replication-task \
             --replication-task-arn "${DMS_TASK_ARN}" \
             --start-replication-task-type "${START_TYPE}" \
@@ -523,45 +600,28 @@ jobs:
           fi
           echo "DMS replication task started."
 
-      - name: Wait for seeded Bronze data in S3
-        if: ${{ inputs.run_cdc_simulator }}
+      - name: Validate current seed full load
+        if: ${{ inputs.data_mode != 'reuse-retained' }}
         env:
-          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          DATA_MODE: ${{ inputs.data_mode }}
+          SEED_PROFILE: ${{ inputs.seed_profile }}
         run: |
-          BUCKET="edp-${ENV}-${ACCOUNT_ID}-bronze"
-          TABLES="customers products orders order_items payments shipments"
-          MAX_ATTEMPTS=40
-          SLEEP_SECONDS=30
-
-          for attempt in $(seq 1 "${MAX_ATTEMPTS}"); do
-            echo "Bronze readiness check ${attempt}/${MAX_ATTEMPTS}"
-            MISSING=""
-            for table in ${TABLES}; do
-              if ! aws s3 ls "s3://${BUCKET}/raw/public/${table}/" --recursive | grep -q ".parquet"; then
-                MISSING="${MISSING} ${table}"
-              fi
-            done
-
-            if [ -z "${MISSING}" ]; then
-              echo "Bronze has Parquet files for all source tables."
-              exit 0
-            fi
-
-            echo "Still waiting for:${MISSING}"
-            sleep "${SLEEP_SECONDS}"
-          done
-
-          echo "Timed out waiting for DMS to land seeded data in Bronze."
-          exit 1
+          OPTIONS=()
+          if [ "$DATA_MODE" = seed-only ]; then
+            OPTIONS+=(--stop-after-load)
+          fi
+          python3 session-tools/scripts/seed_readiness.py \
+            --environment "$ENV" --profile "$SEED_PROFILE" "${OPTIONS[@]}"
 
       - name: Start bounded live injection task
-        if: ${{ inputs.run_cdc_simulator }}
+        if: ${{ inputs.data_mode == 'seed-and-live' }}
         env:
           CLUSTER: ${{ needs.terraform-apply.outputs.cdc_simulator_cluster }}
           TASK_DEFINITION: ${{ steps.cdc-task-def.outputs.task_definition }}
           CONTAINER_NAME: ${{ needs.terraform-apply.outputs.cdc_simulator_container_name }}
           SECURITY_GROUP_ID: ${{ needs.terraform-apply.outputs.cdc_simulator_security_group_id }}
           PRIVATE_SUBNET_IDS: ${{ needs.terraform-apply.outputs.cdc_simulator_private_subnet_ids }}
+          SEED_PROFILE: ${{ inputs.seed_profile }}
           DURATION_MINUTES: ${{ inputs.cdc_simulator_duration_minutes }}
         run: |
           DURATION_SECONDS=$((DURATION_MINUTES * 60))
@@ -570,7 +630,8 @@ jobs:
           OVERRIDES=$(jq -cn \
             --arg name "${CONTAINER_NAME}" \
             --arg duration "${DURATION_SECONDS}" \
-            '{containerOverrides:[{name:$name,command:["simulate","--duration-seconds",$duration]}]}')
+            --arg max_orders "1000000" \
+            '{containerOverrides:[{name:$name,command:["simulate","--duration-seconds",$duration],environment:[{name:"SIM_MAX_ORDERS",value:$max_orders}]}]}')
 
           TASK_ARN=$(aws ecs run-task \
             --cluster "${CLUSTER}" \
@@ -581,6 +642,10 @@ jobs:
             --query 'tasks[0].taskArn' \
             --output text)
 
+          if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" = None ]; then
+            echo "Live injection failed to start."
+            exit 1
+          fi
           echo "Started bounded live CDC injection task."
           echo "Workflow will continue while this task runs for ${DURATION_SECONDS}s."
 
