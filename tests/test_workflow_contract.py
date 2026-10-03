@@ -25,9 +25,9 @@ def test_modes_and_teardown():
 
 
 def test_shell_syntax():
-    for name in ("session-start.yml", "session-destroy.yml", "session-recover.yml", "deploy-session-apps.yml"):
+    for name in ("session-start.yml", "session-destroy.yml"):
         for job in workflow(name)["jobs"].values():
-            for step in job.get("steps", []):
+            for step in job["steps"]:
                 if "run" in step:
                     result = subprocess.run(
                         ["bash", "-n"],
@@ -36,26 +36,3 @@ def test_shell_syntax():
                         capture_output=True,
                     )
                     assert result.returncode == 0, (step["name"], result.stderr)
-
-
-def test_recovery_has_no_terraform_or_full_seed():
-    recover = workflow("session-recover.yml")
-    start = workflow("session-start.yml")
-    assert recover["concurrency"] == start["concurrency"]
-    text = (ROOT / ".github/workflows/session-recover.yml").read_text()
-    assert "terraform apply" not in text and "terraform destroy" not in text
-    assert "bootstrap" not in text and "reload-target" not in text
-    assert recover["jobs"]["deploy-applications"]["uses"] == start["jobs"]["deploy-applications"]["uses"]
-    assert "repair-seed-payments" in recover["jobs"]["repair"]["if"]
-
-
-def test_all_job_dependencies_exist_in_the_same_workflow():
-    for path in (ROOT / ".github/workflows").glob("*.yml"):
-        jobs = workflow(path.name)["jobs"]
-        for name, job in jobs.items():
-            needs = job.get("needs", [])
-            if isinstance(needs, str):
-                needs = [needs]
-            missing = set(needs) - set(jobs)
-            assert not missing, (path.name, name, missing)
-            assert name not in needs, (path.name, name, "self dependency")

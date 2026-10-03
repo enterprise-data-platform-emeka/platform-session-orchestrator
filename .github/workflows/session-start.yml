@@ -73,7 +73,7 @@ on:
         required: true
         default: seed-only
         type: choice
-        options: [seed-only, seed-and-live]
+        options: [seed-only, seed-and-live, reuse-retained]
       seed_profile:
         description: "Seed size (both profiles use fixed 36-month history)"
         required: true
@@ -132,14 +132,6 @@ jobs:
       TF_VAR_claude_provider: ${{ vars.CLAUDE_PROVIDER || 'aws_claude_platform' }}
 
     steps:
-      - name: Require a fresh-session data mode
-        env:
-          DATA_MODE: ${{ inputs.data_mode }}
-        run: |
-          case "$DATA_MODE" in
-            seed-only|seed-and-live) ;;
-            *) echo "Use Session Recover to process existing data without applying infrastructure."; exit 1 ;;
-          esac
       - name: Checkout terraform-platform-infra-live
         uses: actions/checkout@v4
         with:
@@ -473,7 +465,7 @@ jobs:
             --bucket "edp-${ENV}-${ACCOUNT_ID}-bronze" --prefix raw/ \
             --max-keys 1 --query KeyCount --output text)
           if [ "$COUNT" != 0 ]; then
-            echo "Bronze data already exists. Use Session Recover for existing sessions; Session Destroy is only for an intentional reset."
+            echo "Bronze source data already exists. Use reuse-retained, or run Session Destroy before reseeding."
             exit 1
           fi
 
@@ -1308,25 +1300,450 @@ jobs:
 # Runs after whichever trigger job ran. The skipped job counts as success
 # for the needs check, so deploy-agent runs when either job completes.
 
-  deploy-applications:
+  deploy-agent:
+    name: Build and deploy analytics agent (${{ inputs.env }})
     needs: [trigger-step-functions, trigger-mwaa]
     if: ${{ always() && (needs.trigger-step-functions.result == 'success' || needs.trigger-mwaa.result == 'success') }}
-    uses: ./.github/workflows/deploy-session-apps.yml
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+
     permissions:
       id-token: write
       contents: read
-    with:
-      env: ${{ inputs.env }}
-      deploy_slack_mcp: ${{ inputs.deploy_slack_mcp }}
-      deploy_analytics_web: ${{ inputs.deploy_analytics_web }}
-    secrets: inherit
+
+    env:
+      ENV:            ${{ inputs.env }}
+      AWS_REGION:     eu-central-1
+      CONTAINER_NAME: agent
+
+    steps:
+      - name: Checkout platform-analytics-agent
+        uses: actions/checkout@v4
+        with:
+          repository: enterprise-data-platform-emeka/platform-analytics-agent
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Mask AWS account ID in logs
+        env:
+          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: echo "::add-mask::${ACCOUNT_ID}"
+
+      - name: Configure AWS credentials (OIDC)
+        env:
+          ROLE_ARN: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          AWS_REGION_VALUE: ${{ env.AWS_REGION }}
+        run: |
+          echo "::add-mask::${ROLE_ARN}"
+          OIDC_TOKEN_JSON=$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          OIDC_TOKEN=$(printf '%s' "${OIDC_TOKEN_JSON}" | jq -r '.value')
+          CREDS=$(aws sts assume-role-with-web-identity \
+            --role-arn "${ROLE_ARN}" \
+            --role-session-name "github-actions" \
+            --web-identity-token "${OIDC_TOKEN}" \
+            --duration-seconds 3600 \
+            --query Credentials \
+            --output json)
+          AWS_ACCESS_KEY_ID=$(printf '%s' "${CREDS}" | jq -r '.AccessKeyId')
+          AWS_SECRET_ACCESS_KEY=$(printf '%s' "${CREDS}" | jq -r '.SecretAccessKey')
+          AWS_SESSION_TOKEN=$(printf '%s' "${CREDS}" | jq -r '.SessionToken')
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
+          {
+            echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+            echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+            echo "AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}"
+            echo "AWS_REGION=${AWS_REGION_VALUE}"
+            echo "AWS_DEFAULT_REGION=${AWS_REGION_VALUE}"
+          } >> "$GITHUB_ENV"
+          echo "AWS credentials configured via OIDC."
+      - name: Log in to Amazon ECR
+        run: |
+          ECR_REGISTRY="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "::add-mask::${ECR_REGISTRY}"
+          aws ecr get-login-password --region "${AWS_REGION}" |
+            docker login --username AWS --password-stdin "${ECR_REGISTRY}" >/dev/null
+          echo "Logged in to Amazon ECR."
+
+      - name: Build, tag, and push image to ECR
+        id: build-image
+        env:
+          ECR_REPOSITORY: edp-${{ env.ENV }}-analytics-agent
+          IMAGE_TAG:      sha-${{ github.sha }}
+        run: |
+          ECR_REGISTRY="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "::add-mask::${ECR_REGISTRY}"
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          if ! docker build --target runtime \
+            -t "${IMAGE_URI}" \
+            -t "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
+            . >/tmp/docker-build.log 2>&1; then
+            echo "Docker build failed."
+            exit 1
+          fi
+          docker push "${IMAGE_URI}" >/dev/null
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" >/dev/null
+          echo "Container image pushed to ECR."
+          echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
+      - name: Download current task definition
+        env:
+          TASK_FAMILY: edp-${{ env.ENV }}-analytics-agent
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${TASK_FAMILY}" \
+            --query taskDefinition \
+            > task-definition.json
+
+      - name: Update task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name:  ${{ env.CONTAINER_NAME }}
+          image:           ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy new task definition to ECS service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition:            ${{ steps.task-def.outputs.task-definition }}
+          service:                    edp-${{ env.ENV }}-analytics-agent
+          cluster:                    edp-${{ env.ENV }}-analytics-agent
+          wait-for-service-stability: true
+
+# ── Job 8: Optionally build and deploy Slack MCP gateway ─────────────────────
+
+  deploy-slack-mcp:
+    name: Build and deploy Slack MCP gateway (${{ inputs.env }})
+    needs: [terraform-apply, deploy-agent]
+    if: ${{ always() && needs.deploy-agent.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV:            ${{ inputs.env }}
+      AWS_REGION:     eu-central-1
+      CONTAINER_NAME: gateway
+
+    steps:
+      - name: Skip when Slack MCP is disabled
+        if: ${{ !inputs.deploy_slack_mcp }}
+        run: echo "deploy_slack_mcp is false. Skipping Slack MCP gateway deploy."
+
+      - name: Checkout platform-slack-mcp-gateway
+        if: ${{ inputs.deploy_slack_mcp }}
+        uses: actions/checkout@v4
+        with:
+          repository: enterprise-data-platform-emeka/platform-slack-mcp-gateway
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Mask AWS account ID in logs
+        env:
+          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: echo "::add-mask::${ACCOUNT_ID}"
+
+      - name: Configure AWS credentials (OIDC)
+        if: ${{ inputs.deploy_slack_mcp }}
+        env:
+          ROLE_ARN: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          AWS_REGION_VALUE: ${{ env.AWS_REGION }}
+        run: |
+          echo "::add-mask::${ROLE_ARN}"
+          OIDC_TOKEN_JSON=$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          OIDC_TOKEN=$(printf '%s' "${OIDC_TOKEN_JSON}" | jq -r '.value')
+          CREDS=$(aws sts assume-role-with-web-identity \
+            --role-arn "${ROLE_ARN}" \
+            --role-session-name "github-actions" \
+            --web-identity-token "${OIDC_TOKEN}" \
+            --duration-seconds 3600 \
+            --query Credentials \
+            --output json)
+          AWS_ACCESS_KEY_ID=$(printf '%s' "${CREDS}" | jq -r '.AccessKeyId')
+          AWS_SECRET_ACCESS_KEY=$(printf '%s' "${CREDS}" | jq -r '.SecretAccessKey')
+          AWS_SESSION_TOKEN=$(printf '%s' "${CREDS}" | jq -r '.SessionToken')
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
+          {
+            echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+            echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+            echo "AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}"
+            echo "AWS_REGION=${AWS_REGION_VALUE}"
+            echo "AWS_DEFAULT_REGION=${AWS_REGION_VALUE}"
+          } >> "$GITHUB_ENV"
+          echo "AWS credentials configured via OIDC."
+      - name: Seed Slack tokens into Secrets Manager
+        if: ${{ inputs.deploy_slack_mcp }}
+        env:
+          SLACK_APP_TOKEN: ${{ secrets.SLACK_APP_TOKEN }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        run: |
+          aws secretsmanager put-secret-value \
+            --secret-id "/edp/${ENV}/slack_mcp/slack_app_token" \
+            --secret-string "${SLACK_APP_TOKEN}" \
+            >/dev/null
+          aws secretsmanager put-secret-value \
+            --secret-id "/edp/${ENV}/slack_mcp/slack_bot_token" \
+            --secret-string "${SLACK_BOT_TOKEN}" \
+            >/dev/null
+          echo "Slack tokens seeded into Secrets Manager."
+
+      - name: Log in to Amazon ECR
+        if: ${{ inputs.deploy_slack_mcp }}
+        run: |
+          ECR_REGISTRY="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "::add-mask::${ECR_REGISTRY}"
+          aws ecr get-login-password --region "${AWS_REGION}" |
+            docker login --username AWS --password-stdin "${ECR_REGISTRY}" >/dev/null
+          echo "Logged in to Amazon ECR."
+
+      - name: Build, tag, and push image to ECR
+        if: ${{ inputs.deploy_slack_mcp }}
+        id: build-image
+        env:
+          ECR_REPOSITORY: edp-${{ env.ENV }}-slack-mcp-gateway
+          IMAGE_TAG:      sha-${{ github.sha }}
+        run: |
+          ECR_REGISTRY="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "::add-mask::${ECR_REGISTRY}"
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          if ! docker build \
+            -t "${IMAGE_URI}" \
+            -t "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
+            . >/tmp/docker-build.log 2>&1; then
+            echo "Docker build failed."
+            exit 1
+          fi
+          docker push "${IMAGE_URI}" >/dev/null
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" >/dev/null
+          echo "Container image pushed to ECR."
+          echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
+      - name: Download current task definition
+        if: ${{ inputs.deploy_slack_mcp }}
+        env:
+          TASK_FAMILY: edp-${{ env.ENV }}-slack-mcp-gateway
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${TASK_FAMILY}" \
+            --query taskDefinition \
+            > task-definition.json
+
+      - name: Update task definition with new image
+        if: ${{ inputs.deploy_slack_mcp }}
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name:  ${{ env.CONTAINER_NAME }}
+          image:           ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy new task definition to ECS service
+        if: ${{ inputs.deploy_slack_mcp }}
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition:            ${{ steps.task-def.outputs.task-definition }}
+          service:                    edp-${{ env.ENV }}-slack-mcp-gateway
+          cluster:                    edp-${{ env.ENV }}-slack-mcp-gateway
+          wait-for-service-stability: false
+
+      - name: Scale Slack MCP gateway to one task
+        if: ${{ inputs.deploy_slack_mcp }}
+        run: |
+          aws ecs update-service \
+            --cluster "edp-${ENV}-slack-mcp-gateway" \
+            --service "edp-${ENV}-slack-mcp-gateway" \
+            --desired-count 1 \
+            --force-new-deployment >/dev/null
+          aws ecs wait services-stable \
+            --cluster "edp-${ENV}-slack-mcp-gateway" \
+            --services "edp-${ENV}-slack-mcp-gateway"
+          echo "Slack MCP gateway deployed and stable."
+
+# ── Job 9: Optionally build and deploy custom analytics web dashboard ────────
+
+  deploy-analytics-web:
+    name: Build and deploy analytics web (${{ inputs.env }})
+    needs: [terraform-apply, deploy-agent]
+    if: ${{ always() && needs.deploy-agent.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      ENV:            ${{ inputs.env }}
+      AWS_REGION:     eu-central-1
+      CONTAINER_NAME: web
+
+    steps:
+      - name: Skip when analytics web is disabled
+        if: ${{ !inputs.deploy_analytics_web }}
+        run: echo "deploy_analytics_web is false. Skipping custom HTML analytics dashboard deploy."
+
+      - name: Checkout platform-analytics-web
+        if: ${{ inputs.deploy_analytics_web }}
+        uses: actions/checkout@v4
+        with:
+          repository: enterprise-data-platform-emeka/platform-analytics-web
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Mask AWS account ID in logs
+        env:
+          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: echo "::add-mask::${ACCOUNT_ID}"
+
+      - name: Configure AWS credentials (OIDC)
+        if: ${{ inputs.deploy_analytics_web }}
+        env:
+          ROLE_ARN: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/edp-${{ env.ENV }}-github-actions-role
+          AWS_REGION_VALUE: ${{ env.AWS_REGION }}
+        run: |
+          echo "::add-mask::${ROLE_ARN}"
+          OIDC_TOKEN_JSON=$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          OIDC_TOKEN=$(printf '%s' "${OIDC_TOKEN_JSON}" | jq -r '.value')
+          CREDS=$(aws sts assume-role-with-web-identity \
+            --role-arn "${ROLE_ARN}" \
+            --role-session-name "github-actions" \
+            --web-identity-token "${OIDC_TOKEN}" \
+            --duration-seconds 3600 \
+            --query Credentials \
+            --output json)
+          AWS_ACCESS_KEY_ID=$(printf '%s' "${CREDS}" | jq -r '.AccessKeyId')
+          AWS_SECRET_ACCESS_KEY=$(printf '%s' "${CREDS}" | jq -r '.SecretAccessKey')
+          AWS_SESSION_TOKEN=$(printf '%s' "${CREDS}" | jq -r '.SessionToken')
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
+          {
+            echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+            echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+            echo "AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}"
+            echo "AWS_REGION=${AWS_REGION_VALUE}"
+            echo "AWS_DEFAULT_REGION=${AWS_REGION_VALUE}"
+          } >> "$GITHUB_ENV"
+          echo "AWS credentials configured via OIDC."
+      - name: Log in to Amazon ECR
+        if: ${{ inputs.deploy_analytics_web }}
+        run: |
+          ECR_REGISTRY="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "::add-mask::${ECR_REGISTRY}"
+          aws ecr get-login-password --region "${AWS_REGION}" |
+            docker login --username AWS --password-stdin "${ECR_REGISTRY}" >/dev/null
+          echo "Logged in to Amazon ECR."
+
+      - name: Build, tag, and push image to ECR
+        if: ${{ inputs.deploy_analytics_web }}
+        id: build-web-image
+        env:
+          ECR_REPOSITORY: edp-${{ env.ENV }}-analytics-web
+          IMAGE_TAG:      sha-${{ github.sha }}
+        run: |
+          ECR_REGISTRY="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "::add-mask::${ECR_REGISTRY}"
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          if ! docker build \
+            -t "${IMAGE_URI}" \
+            -t "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
+            . >/tmp/docker-build.log 2>&1; then
+            echo "Docker build failed."
+            exit 1
+          fi
+          docker push "${IMAGE_URI}" >/dev/null
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" >/dev/null
+          echo "Container image pushed to ECR."
+          echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
+      - name: Download current task definition
+        if: ${{ inputs.deploy_analytics_web }}
+        env:
+          TASK_FAMILY: edp-${{ env.ENV }}-analytics-web
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${TASK_FAMILY}" \
+            --query taskDefinition \
+            > task-definition.json
+
+      - name: Update task definition with new image
+        if: ${{ inputs.deploy_analytics_web }}
+        id: web-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name:  ${{ env.CONTAINER_NAME }}
+          image:           ${{ steps.build-web-image.outputs.image }}
+
+      - name: Deploy new task definition to ECS service
+        if: ${{ inputs.deploy_analytics_web }}
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition:            ${{ steps.web-task-def.outputs.task-definition }}
+          service:                    edp-${{ env.ENV }}-analytics-web
+          cluster:                    edp-${{ env.ENV }}-analytics-web
+          wait-for-service-stability: false
+
+      - name: Scale analytics web to one task
+        if: ${{ inputs.deploy_analytics_web }}
+        run: |
+          aws ecs update-service \
+            --cluster "edp-${ENV}-analytics-web" \
+            --service "edp-${ENV}-analytics-web" \
+            --desired-count 1 \
+            --force-new-deployment >/dev/null
+          aws ecs wait services-stable \
+            --cluster "edp-${ENV}-analytics-web" \
+            --services "edp-${ENV}-analytics-web"
+          echo "Analytics web dashboard deployed and stable."
+
+# ── Job 10: Session ready — confirm availability without public endpoints ─────
 
   session-ready:
     name: Session ready
-    needs: deploy-applications
+    needs: [terraform-apply, deploy-agent, deploy-slack-mcp, deploy-analytics-web]
+    if: ${{ always() && needs.deploy-agent.result == 'success' && needs.deploy-slack-mcp.result == 'success' && needs.deploy-analytics-web.result == 'success' }}
     runs-on: ubuntu-latest
+
     steps:
       - name: Print session summary
+        env:
+          ENV:                  ${{ inputs.env }}
+          ORCHESTRATOR:         ${{ inputs.orchestrator }}
+          SERVING_LAYER:        ${{ inputs.serving_layer }}
+          DEPLOY_SLACK_MCP:     ${{ inputs.deploy_slack_mcp }}
+          DEPLOY_ANALYTICS_WEB: ${{ inputs.deploy_analytics_web }}
+          AGENT_HOST:           ${{ needs.terraform-apply.outputs.alb_dns }}
+          WEB_HOST:             ${{ needs.terraform-apply.outputs.analytics_web_url }}
         run: |
-          echo "Session applications are ready. Read endpoints from the AWS console."
-          echo "When finished, run Session Destroy to stop resources and empty session data."
+          STREAMLIT_URL="http://${AGENT_HOST}:8501"
+          FASTAPI_URL="http://${AGENT_HOST}:80"
+          DASHBOARD_URL="${WEB_HOST}"
+          echo ""
+          echo "================================================"
+          echo "  SESSION IS READY"
+          echo "================================================"
+          echo ""
+          echo "  Environment  : ${ENV}"
+          echo "  Orchestrator : ${ORCHESTRATOR}"
+          echo "  Serving layer: ${SERVING_LAYER}"
+          echo ""
+          echo "  Streamlit UI  : ${STREAMLIT_URL}"
+          echo "  FastAPI       : ${FASTAPI_URL}"
+          echo ""
+          if [ "${DEPLOY_ANALYTICS_WEB}" = "true" ] && [ -n "${WEB_HOST}" ]; then
+            echo "  Analytics Web : ${DASHBOARD_URL}"
+            echo ""
+          fi
+          if [ "${DEPLOY_SLACK_MCP}" = "true" ]; then
+            echo "  Slack MCP Gateway: Deployed. Ask @EDP Analytics Agent in #analytics-agent-demo."
+            echo ""
+          fi
+          echo "  When done: run the Session Destroy workflow."
+          echo "  Cost so far: ~\$0.30-\$0.50 (infra up, no queries yet)"
+          echo ""
+          echo "================================================"
