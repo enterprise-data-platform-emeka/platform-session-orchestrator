@@ -47,3 +47,15 @@ def test_recovery_has_no_terraform_or_full_seed():
     assert "bootstrap" not in text and "reload-target" not in text
     assert recover["jobs"]["deploy-applications"]["uses"] == start["jobs"]["deploy-applications"]["uses"]
     assert "repair-seed-payments" in recover["jobs"]["repair"]["if"]
+
+
+def test_all_job_dependencies_exist_in_the_same_workflow():
+    for path in (ROOT / ".github/workflows").glob("*.yml"):
+        jobs = workflow(path.name)["jobs"]
+        for name, job in jobs.items():
+            needs = job.get("needs", [])
+            if isinstance(needs, str):
+                needs = [needs]
+            missing = set(needs) - set(jobs)
+            assert not missing, (path.name, name, missing)
+            assert name not in needs, (path.name, name, "self dependency")

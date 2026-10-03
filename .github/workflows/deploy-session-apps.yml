@@ -125,7 +125,7 @@ jobs:
 
   deploy-slack-mcp:
     name: Build and deploy Slack MCP gateway (${{ inputs.env }})
-    needs: [terraform-apply, deploy-agent]
+    needs: deploy-agent
     if: ${{ always() && needs.deploy-agent.result == 'success' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
@@ -278,7 +278,7 @@ jobs:
 
   deploy-analytics-web:
     name: Build and deploy analytics web (${{ inputs.env }})
-    needs: [terraform-apply, deploy-agent]
+    needs: deploy-agent
     if: ${{ always() && needs.deploy-agent.result == 'success' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.env }}
