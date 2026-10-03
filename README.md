@@ -298,3 +298,71 @@ Start with `seed_profile=smoke`, verify startup and teardown, then run the full
 profile. Infrastructure configures the seed task with 1 vCPU and 2 GiB.
 
 Validation: `python -m pytest tests -q` after installing pytest, PyYAML and boto3.
+
+## Recover an existing session
+
+Use **Actions → Session Recover → Run workflow** after merging fixes. This workflow
+uses the existing Step Functions session; it does not apply Terraform, reboot RDS,
+reseed the database, or rebuild the whole platform.
+
+| Scope | Work performed |
+|---|---|
+| `gold` | Refresh merged dbt/Glue code and run Gold models and tests |
+| `silver-and-gold` | Rerun the selected Silver job, verify the crawler, then Gold |
+| `repair-seed-payments` | Repair canonical v1 payment methods in PostgreSQL; reload payments, seed event history and manifest; rerun payment Silver and Gold |
+
+For the historical seed payment failure, merge the simulator's `feat/session-recovery`
+branch first, then this repository's branch. Select `env=dev`,
+`scope=repair-seed-payments`, and enable application deployment. Select the web
+option if that service was provisioned by Session Start. All code checkouts use
+merged `main`; a pull request alone does not deploy a fix.
+
+```mermaid
+flowchart LR
+  A[Verify idle existing session] --> B[Verify and repair PostgreSQL transaction]
+  B --> C[Checkpoint source receipt]
+  C --> D[Reload three DMS tables]
+  D --> E[Validate Bronze counts and manifest]
+  E --> F[Payment Silver and crawler]
+  F --> G[Gold models and dbt tests]
+  G --> H[Optional existing application deployment]
+```
+
+Recovery requires the seed-only readiness marker, existing source/runtime resources,
+versioned Bronze, and idle source tasks, Glue jobs, crawler and Step Functions.
+It refuses an existing MWAA environment; this recovery workflow currently supports
+Step Functions sessions only. No live injection should be started while recovering.
+The workflow shares the Start/Destroy concurrency group. Other repositories and
+manual AWS operations must also remain idle.
+
+The source repair accepts only canonical v1 or v2 synthetic datasets. It verifies
+all source rows under database write locks and updates payment snapshots, history
+payloads and manifest in one transaction. Changed datasets are rejected. A repeated
+repair verifies the completed v2 dataset instead of applying another update.
+
+The private Bronze journal at `metadata/recovery/payment-method-v2.json` records
+progress. A retry after Bronze validation skips source repair and DMS loading;
+a retry after successful Silver skips Silver when its code revision is unchanged.
+Gold always reruns its validations. If a source task is still running after a workflow
+cancellation, wait for it to stop and inspect its CloudWatch log before retrying.
+The helper does not kill running tasks. If a DMS reload was interrupted, the same
+repair scope stops DMS and repeats only the three affected tables.
+
+Before replacing affected Bronze objects, recovery saves their version IDs under
+`metadata/recovery/backups/`. It adds delete markers rather than deleting original
+versions. Only newly loaded `LOAD*.parquet` snapshot files are kept current for the
+three repaired tables; migration CDC files are hidden after DMS stops. Actual Parquet
+row counts, payment methods and the source receipt must match before processing.
+This follows the [DMS table reload requirements](https://docs.aws.amazon.com/dms/latest/userguide/CHAP_Tasks.ReloadTables.html)
+and [S3 full-load/CDC file conventions](https://docs.aws.amazon.com/dms/latest/userguide/CHAP_Target.S3.html).
+Backup versions remain until daily Session Destroy empties the session buckets.
+Terraform backend state remains excluded from that cleanup.
+
+An incomplete repair blocks other recovery scopes. Inspect the private simulator,
+DMS or Glue CloudWatch logs for the failed stage; do not manually mark checkpoints
+complete. Select the same repair scope to resume. `reuse-retained` is retired from
+Session Start because it could apply infrastructure changes to an existing session.
+Use Session Recover for processing fixes, and Session Destroy for end-of-day cleanup.
+
+Local verification: `python -m pytest tests/`. Cloud execution remains a controlled
+smoke test after merge; local tests do not establish live DMS/ECS success.
