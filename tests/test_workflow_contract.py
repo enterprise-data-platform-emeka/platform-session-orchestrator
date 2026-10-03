@@ -25,9 +25,9 @@ def test_modes_and_teardown():
 
 
 def test_shell_syntax():
-    for name in ("session-start.yml", "session-destroy.yml"):
+    for name in ("session-start.yml", "session-destroy.yml", "session-recover.yml", "deploy-session-apps.yml"):
         for job in workflow(name)["jobs"].values():
-            for step in job["steps"]:
+            for step in job.get("steps", []):
                 if "run" in step:
                     result = subprocess.run(
                         ["bash", "-n"],
@@ -36,3 +36,14 @@ def test_shell_syntax():
                         capture_output=True,
                     )
                     assert result.returncode == 0, (step["name"], result.stderr)
+
+
+def test_recovery_has_no_terraform_or_full_seed():
+    recover = workflow("session-recover.yml")
+    start = workflow("session-start.yml")
+    assert recover["concurrency"] == start["concurrency"]
+    text = (ROOT / ".github/workflows/session-recover.yml").read_text()
+    assert "terraform apply" not in text and "terraform destroy" not in text
+    assert "bootstrap" not in text and "reload-target" not in text
+    assert recover["jobs"]["deploy-applications"]["uses"] == start["jobs"]["deploy-applications"]["uses"]
+    assert "repair-seed-payments" in recover["jobs"]["repair"]["if"]
